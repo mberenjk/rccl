@@ -1581,9 +1581,10 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   NCCLCHECKGOTO(devCommSetup(comm), ret, fail);
 
   if (mscclEnabled() && (comm->topo->mscclEnabled || mscclForceEnabled())) {
-    NCCLCHECK(mscclInit(comm));
-    mscclStatus& status = mscclGetStatus();
-    status.needsProxy |= mscclNeedsProxy;
+    if(mscclInit(comm) == ncclSuccess) {
+       mscclStatus& status = mscclGetStatus();
+       status.needsProxy |= mscclNeedsProxy;
+    }
   }
 
   /* Local intra-node barrier */

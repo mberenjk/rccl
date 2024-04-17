@@ -591,7 +591,8 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
 
   if (mscclEnabled() && (comm->topo->mscclEnabled || mscclForceEnabled())) {
     int mscclNumChannelsRequired = 0;
-    mscclSchedulerInit(comm, &mscclNumChannelsRequired);
+    if(mscclSchedulerInit(comm, &mscclNumChannelsRequired) != ncclSuccess)
+	    return ncclInvalidUsage;
     minNchannels = std::max(minNchannels, mscclNumChannelsRequired);
   }
 
