@@ -668,7 +668,7 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, uint32_t rocmDev
     CUDACHECK(hipGetDeviceProperties(&devProp, 0));
     //extract only the releveant info from the gcnArchName attribute
     //e.g.: convert "gfx908:sramecc+:xnack-" to "gfx908"
-    char gcnArchNameSubstr[6];
+    char gcnArchNameSubstr[16];
     GcnArchNameFormat(devProp.gcnArchName, gcnArchNameSubstr);
     gcn = gcnArchNameSubstr;
     NCCLCHECK(xmlSetAttr(gpuNode, "gcn", gcn));
