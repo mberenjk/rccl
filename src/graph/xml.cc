@@ -675,7 +675,9 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, uint32_t rocmDev
   }
   NCCLCHECK(xmlGetAttr(gpuNode, "gcn", &gcn));
   convertGcnArchToGcnArchName(gcn, &gcnArchName);
-  NCCLCHECK(xmlSetAttr(gpuNode, "gcn", gcnArchName));
+  if (gcn != gcnArchName) {
+     NCCLCHECK(xmlSetAttr(gpuNode, "gcn", gcnArchName));
+  }
 
   rcclHipDeviceArch_t arch;
   NCCLCHECK(xmlGetAttrIndex(gpuNode, "arch", &index));
