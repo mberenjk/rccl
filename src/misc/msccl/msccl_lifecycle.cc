@@ -22,8 +22,13 @@
 #include "msccl/msccl_setup.h"
 #include "msccl/msccl_status.h"
 
+#ifdef ENABLE_MSCCLPP
+#include "mscclpp/mscclpp_nccl.h"
+#endif
+
 RCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
 RCCL_PARAM(MscclForceEnabled, "MSCCL_FORCE_ENABLE", 0);
+RCCL_PARAM(MscclEnableSingleProcess, "MSCCL_ENABLE_SINGLE_PROCESS", 1);
 static const char* mscclAlgoFilePathEnv = "MSCCL_ALGO_FILE_PATH";
 
 bool mscclEnabled() {
@@ -58,10 +63,49 @@ bool mscclAvailable(int rank) {
   return mscclEnabled() && mscclInitialized(rank);
 }
 
-static bool mscclCommCompatible(ncclComm_t comm) {
-  // MSCCL is always compatible now. No need to guard against multi-thread.
+static bool allProcessHostsUnique(ncclComm_t comm) {
+  std::map<uint64_t, std::set<uint64_t>> hostHashToPidHashes;
+  for (int i = 0; i < comm->nRanks; i++) {
+    uint64_t hostHash = comm->peerInfo[i].hostHash;
+    uint64_t pidHash = comm->peerInfo[i].pidHash;
+    if (hostHashToPidHashes.find(hostHash) != hostHashToPidHashes.end()) {
+      auto& pidHashSet = hostHashToPidHashes[hostHash];
+      if (pidHashSet.find(pidHash) != pidHashSet.end()) {
+        return false;
+      }
+    }
+    hostHashToPidHashes[hostHash].insert(pidHash);
+  }
   return true;
 }
+
+static bool mscclCommCompatible(ncclComm_t comm) {
+  if (rcclParamMscclEnableSingleProcess()) {
+    // Single process usage enabled. No need to guard against multi-thread.
+    return true;
+  }
+  return allProcessHostsUnique(comm);
+}
+
+#ifdef ENABLE_MSCCLPP 
+bool mscclppCommCompatible(ncclComm_t comm) {
+  return allProcessHostsUnique(comm);
+}
+#endif
+
+const char *mscclFuncNames[] = {
+            "mscclFuncReduce",
+            "mscclFuncBroadcast",
+            "mscclFuncAllReduce",
+            "mscclFuncReduceScatter",
+            "mscclFuncAllGather",
+            "mscclFuncSend",
+            "mscclFuncRecv",
+            "mscclFuncGather",
+            "mscclFuncScatter",
+            "mscclFuncAllToAll",
+            "mscclFuncAllToAllv",
+          };
 
 static const char* mscclSchedulerPathEnv = "MSCCL_SCHEDULER";
 static const char* mscclSchedulerDefaultPath = "libmsccl-scheduler.so";
@@ -76,12 +120,18 @@ static ncclResult_t mscclInternalSchedulerInit(ncclComm_t comm, int* numChannels
   static thread_local bool mscclAlgoMetaLoaded = false;
   mscclStatus& status = mscclGetStatus(comm->rank);
 
+  int maxNchannels = *numChannelsRequired;
   *numChannelsRequired = 0;
   // Query numChannelsRequired from loaded algorithm metas
   if (mscclAlgoMetaLoaded) {
     for (auto& m : status.algoMetas) {
       if (comm->nRanks == m.nRanks) {
-        *numChannelsRequired = std::max(*numChannelsRequired, m.nChannels);
+        if(m.nChannels <= maxNchannels) {
+          *numChannelsRequired = std::max(*numChannelsRequired, m.nChannels);
+        } else {
+          WARN("NCCL_MAX_NCHANNELS:%d is lesser than number of channels required by MSCCL:%d, so disabling MSCCL for %s between minBytes:%ld and maxBytes:%ld from file: %s", \
+                maxNchannels, m.nChannels, mscclFuncNames[m.func], m.minBytes, m.maxBytes, m.filePath.c_str());
+        }
       }
     }
     return ncclSuccess;
@@ -134,7 +184,14 @@ static ncclResult_t mscclInternalSchedulerInit(ncclComm_t comm, int* numChannels
     fullPath += entry->d_name;
     NCCLCHECK(mscclGetAlgoMetaFromXmlFile(fullPath.c_str(), &(status.algoMetas.back())));
     if (status.algoMetas.back().nRanks == comm->nRanks) {
-      *numChannelsRequired = std::max(*numChannelsRequired, status.algoMetas.back().nChannels);
+      if(status.algoMetas.back().nChannels <= maxNchannels) {
+        *numChannelsRequired = std::max(*numChannelsRequired, status.algoMetas.back().nChannels);
+      } else {
+        WARN("NCCL_MAX_NCHANNELS:%d is lesser than number of channels required by MSCCL:%d, so disabling MSCCL for %s between minBytes:%ld and maxBytes:%ld from file: %s", \
+	      maxNchannels, status.algoMetas.back().nChannels, mscclFuncNames[status.algoMetas.back().func], status.algoMetas.back().minBytes, status.algoMetas.back().maxBytes, \
+	      status.algoMetas.back().filePath.c_str());
+        status.algoMetas.pop_back();
+      }
     }
   }
   if (closedir(dp)) {
@@ -147,7 +204,6 @@ static ncclResult_t mscclInternalSchedulerInit(ncclComm_t comm, int* numChannels
 }
 
 ncclResult_t mscclSchedulerInit(ncclComm_t comm, int* numChannelsRequired) {
-  *numChannelsRequired = 0;
   comm->mscclCompatible = mscclCommCompatible(comm);
   if (!comm->mscclCompatible) {
     return ncclSuccess;
@@ -344,26 +400,12 @@ static ncclResult_t mscclSaveCountsAndDispls(struct mscclSavedSchedulerParam* pa
   return ncclSuccess;
 }
 
-const char *mscclFuncNames[] = {
-            "mscclFuncReduce",
-            "mscclFuncBroadcast",
-            "mscclFuncAllReduce",
-            "mscclFuncReduceScatter",
-            "mscclFuncAllGather",
-            "mscclFuncSend",
-            "mscclFuncRecv",
-            "mscclFuncGather",
-            "mscclFuncScatter",
-            "mscclFuncAllToAll",
-            "mscclFuncAllToAllv",
-          };
-
 static ncclResult_t mscclRunSavedParams() {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   for (auto& param : threadLocalStatus.savedSchedulerParams) {
-    INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p",
+    INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p task %d globalrank %d",
     mscclFuncNames[param.p.func], param.p.opCount, param.p.sendBuff, param.p.recvBuff, param.p.count,
-    param.p.dataType, param.p.op, param.p.root, param.comm, param.p.nRanks, param.stream);
+    param.p.dataType, param.p.op, param.p.root, param.comm, param.p.nRanks, param.stream, param.comm->tasks.nTasksP2p + param.comm->tasks.nTasksColl, param.comm->localRankToRank[param.comm->localRank]);
 
     NCCLCHECK(mscclRunAlgo(
       param.p.sendBuff, param.p.sendCounts, param.p.sDisPls,
@@ -435,6 +477,25 @@ static ncclResult_t mscclFallBackSavedParams() {
   return ncclSuccess;
 }
 
+#ifdef ENABLE_MSCCLPP
+static inline bool isMscclppAllReduceSupported(ncclDataType_t dataType, ncclRedOp_t op) {
+  switch (dataType) {
+  case ncclFloat16:
+  case ncclInt32:
+  case ncclUint32:
+  case ncclFloat32:
+#ifdef RCCL_BFLOAT16
+  case ncclBfloat16:
+#endif
+    break;
+  default:
+    return false;
+  }
+
+  return (op == ncclSum);
+}
+#endif
+
 ncclResult_t mscclEnqueueCheck(
     const void* sendBuff, const size_t sendCounts[], const size_t sDisPls[],
     void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
@@ -448,18 +509,82 @@ ncclResult_t mscclEnqueueCheck(
     count, dataType, root, peer, op, func, comm, stream,
     &threadLocalStatus.savedSchedulerParams.back()));
 
+  size_t nBytes = count * ncclTypeSize(dataType);
+
   switch (threadLocalStatus.groupStatus) {
     case mscclNoGroup:
+#ifdef ENABLE_MSCCLPP
+      if (comm->mscclppCompatible) {
+        if (threadLocalStatus.captureStatus == mscclUnknownCaptureStatus) {
+          INFO(NCCL_COLL, "MSCCL++: reading capture status");
+          NCCLCHECK(mscclGetCaptureStatus(comm->rank, stream));
+        }
+
+        /* check if one rank per GPU and graph mode is enabled */
+        if ((threadLocalStatus.captureStatus != mscclNoCapture) && comm->mscclCompatible && nBytes > 0 && (nBytes & 31) == 0) {
+          bool isManagedBuffer = false;
+          if (sendBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(sendBuff)));
+          if (!isManagedBuffer && recvBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(recvBuff)));
+
+          if (isManagedBuffer) { /* MSCCL++ not enabled for managed memory buffers */ }
+          else if (func == mscclFuncAllReduce && nBytes <= comm->mscclpp_threshold && isMscclppAllReduceSupported(dataType, op)) {
+            INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p",
+              "mscclpp_ncclAllReduce", comm->opCount, sendBuff, recvBuff, count, dataType, op, root, comm, comm->nRanks, stream);
+            NCCLCHECK(mscclpp_ncclAllReduce(sendBuff, recvBuff, count, dataType, op, comm->mscclpp_comm, stream));
+            threadLocalStatus.savedSchedulerParams.clear();
+            break;
+          }
+          else if (func == mscclFuncAllGather && nBytes * comm->nRanks <= comm->mscclpp_threshold) {
+            INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p",
+              "mscclpp_ncclAllGather", comm->opCount, sendBuff, recvBuff, count, dataType, op, root, comm, comm->nRanks, stream);
+            NCCLCHECK(mscclpp_ncclAllGather(sendBuff, recvBuff, count, dataType, comm->mscclpp_comm, stream));
+            threadLocalStatus.savedSchedulerParams.clear();
+            break;
+          }
+        }
+      }
+#endif
       if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             NCCLCHECK(mscclRunSavedParams());
             break;
           }
-        }
+      }
       NCCLCHECK(mscclFallBackSavedParams());
       break;
     case mscclGroupSupportedOp:
+#ifdef ENABLE_MSCCLPP
+      if (comm->mscclppCompatible) {
+        if (threadLocalStatus.captureStatus == mscclUnknownCaptureStatus) {
+          INFO(NCCL_COLL, "MSCCL++: reading capture status");
+          NCCLCHECK(mscclGetCaptureStatus(comm->rank, stream));
+        }
+
+        /* check if one rank per GPU and graph mode is enabled */
+        if ((threadLocalStatus.captureStatus != mscclNoCapture) && comm->mscclCompatible && nBytes > 0 && (nBytes & 31) == 0) {
+          bool isManagedBuffer = false;
+          if (sendBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(sendBuff)));
+          if (!isManagedBuffer && recvBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(recvBuff)));
+
+          if (isManagedBuffer) { /* MSCCL++ not enabled for managed memory buffers */ }
+          else if (func == mscclFuncAllReduce && nBytes <= comm->mscclpp_threshold && isMscclppAllReduceSupported(dataType, op)) {
+            INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p",
+              "mscclpp_ncclAllReduce", comm->opCount, sendBuff, recvBuff, count, dataType, op, root, comm, comm->nRanks, stream);
+            NCCLCHECK(mscclpp_ncclAllReduce(sendBuff, recvBuff, count, dataType, op, comm->mscclpp_comm, stream));
+            threadLocalStatus.savedSchedulerParams.clear();
+            break;
+          }
+          else if (func == mscclFuncAllGather && nBytes * comm->nRanks <= comm->mscclpp_threshold) {
+            INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p",
+              "mscclpp_ncclAllGather", comm->opCount, sendBuff, recvBuff, count, dataType, op, root, comm, comm->nRanks, stream);
+            NCCLCHECK(mscclpp_ncclAllGather(sendBuff, recvBuff, count, dataType, comm->mscclpp_comm, stream));
+            threadLocalStatus.savedSchedulerParams.clear();
+            break;
+          }
+        }
+      }
+#endif
       if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {

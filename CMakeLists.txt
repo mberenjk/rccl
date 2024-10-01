@@ -26,6 +26,7 @@ option(BUILD_SHARED_LIBS                       "Build as shared library"        
 option(BUILD_TESTS                             "Build unit test programs"                      OFF)
 option(COLLTRACE                               "Collective Trace Option"                       ON)
 option(ENABLE_MSCCL_KERNEL                     "Enable MSCCL while compiling"                  ON)
+option(ENABLE_MSCCLPP                          "Enable MSCCL++"                                ON)
 option(ENABLE_IFC                              "Enable indirect function call"                 OFF)
 option(INSTALL_DEPENDENCIES                    "Force install dependencies"                    OFF)
 option(ROCTX                                   "Enable ROCTX"                                  OFF)
@@ -36,12 +37,9 @@ option(TRACE                                   "Enable additional tracing"      
 # Default GPU architectures to build
 #==================================================================================================
 set(DEFAULT_GPUS
-      gfx803
-      gfx900:xnack-
-      gfx906:xnack-
-      gfx908:xnack-
-      gfx90a:xnack-
-      gfx90a:xnack+
+      gfx906
+      gfx908
+      gfx90a
       gfx940
       gfx941
       gfx942
@@ -59,6 +57,8 @@ include(CheckSymbolExists)
 include(cmake/Dependencies.cmake) # GTest, rocm-cmake, rocm_local_targets
 include(cmake/Generator.cmake)    # Configure functions that goes into RCCL
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # Build only for local GPU architecture
 if (BUILD_LOCAL_GPU_TARGET_ONLY)
   message(STATUS "Building only for local GPU target")
@@ -71,13 +71,27 @@ endif()
 
 # Determine which GPU architectures to build for
 set(AMDGPU_TARGETS "${DEFAULT_GPUS}" CACHE STRING "Target default GPUs if AMDGPU_TARGETS is not defined.")
+
+# Modify GPU architectures for Address Sanitizer builds by appending "xnack+"
+if (BUILD_ADDRESS_SANITIZER)
+  SET(amdgpu_targets "")
+  foreach(amdgpu_target IN LISTS AMDGPU_TARGETS)
+    if(NOT amdgpu_target STREQUAL "")
+      list(APPEND amdgpu_targets "${amdgpu_target}:xnack+")
+    endif()
+  endforeach()
+  SET(AMDGPU_TARGETS "${amdgpu_targets}" CACHE STRING "Modified GPU list for Address-Sanitizer enabled build." FORCE)
+endif()
+
+# Check if clang compiler can offload to AMDGPU_TARGETS
 if (COMMAND rocm_check_target_ids)
-  message(STATUS "Checking for ROCm support for GPU targets:")
+  message(STATUS "Checking for ROCm support for GPU targets: " "${AMDGPU_TARGETS}")
   rocm_check_target_ids(SUPPORTED_GPUS TARGETS ${AMDGPU_TARGETS})
 else()
   message(WARNING "Unable to check for supported GPU targets. Falling back to default GPUs.")
   set(SUPPORTED_GPUS ${DEFAULT_GPUS})
 endif()
+
 set(GPU_TARGETS "${SUPPORTED_GPUS}" CACHE STRING "GPU targets to compile for.")
 message(STATUS "Compiling for ${GPU_TARGETS}")
 
@@ -87,19 +101,30 @@ include(cmake/Dependencies.cmake) # Reloading to use desired GPU_TARGETS instead
 # Try to establish ROCM_PATH (for find_package)
 #==================================================================================================
 if(NOT DEFINED ROCM_PATH)
-  if("${CMAKE_CXX_COMPILER}" MATCHES ".*hipcc$")
-    # Guess based on provided compiler location
-    get_filename_component(_real_path ${CMAKE_CXX_COMPILER} REALPATH)
-    get_filename_component(_new_path "${_real_path}" DIRECTORY)
-    get_filename_component(ROCM_PATH "${_new_path}/.." REALPATH)
-    message(STATUS "Setting ROCM_PATH based on hipcc location to ${ROCM_PATH}")
-  else()
-    # Guess default location
-    set(ROCM_PATH "/opt/rocm")
-    message(WARNING "Unable to find ROCM_PATH: Falling back to ${ROCM_PATH}")
-  endif()
+  # Guess default location
+  set(ROCM_PATH "/opt/rocm")
+  message(WARNING "Unable to find ROCM_PATH: Falling back to ${ROCM_PATH}")
 else()
   message(STATUS "ROCM_PATH found: ${ROCM_PATH}")
+endif()
+
+if("${CMAKE_CXX_COMPILER}" MATCHES ".*amdclang\\+\\+")
+  message(STATUS "Compiling with amdclang++")
+  set(COMPILER_EXE_NAME amdclang++)
+  set(COMPILER_GREP_STRING "AMD clang version")
+  set(COMPILER_AWK_CMD "awk -F\" \" '{ printf $4}'")
+elseif("${CMAKE_CXX_COMPILER}" MATCHES ".*clang\\+\\+")
+  message(STATUS "Compiling with clang++")
+  set(COMPILER_EXE_NAME clang++)
+  set(COMPILER_GREP_STRING "AMD clang version")
+  set(COMPILER_AWK_CMD "awk -F\" \" '{ printf $4}'")
+elseif("${CMAKE_CXX_COMPILER}" MATCHES ".*hipcc$")
+  message(STATUS "Compiling with hipcc")
+  set(COMPILER_EXE_NAME hipcc)
+  set(COMPILER_GREP_STRING "HIP version")
+  set(COMPILER_AWK_CMD "awk -F\" \" '{ printf $3}' | awk -F\"-\" '{ printf $1}'")
+else()
+  message(FATAL_ERROR "RCCL can be built only with hipcc or amdclang++")
 endif()
 
 # Set CMAKE flags
@@ -110,8 +135,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)  # Without this line, it will add -std=gnu++14 ins
 list(APPEND CMAKE_PREFIX_PATH  # Add ROCM_PATH to CMake search paths (for finding HIP / HSA
             ${ROCM_PATH}
             ${ROCM_PATH}/hip
-            ${ROCM_PATH}/llvm
-            ${ROCM_PATH}/hcc)
+            ${ROCM_PATH}/llvm)
 
 # Check for required dependencies
 #==================================================================================================
@@ -124,14 +148,24 @@ find_package(hip REQUIRED)
 message(STATUS "HIP compiler:     ${HIP_COMPILER}")
 message(STATUS "HIP runtime:      ${HIP_RUNTIME}")
 if(NOT "${HIP_COMPILER}" MATCHES "clang")
-  message(FATAL_ERROR "RCCL requires clang-based compiler (hipcc)")
+  message(FATAL_ERROR "RCCL requires clang-based compiler (amdclang++ or hipcc)")
 endif()
-find_program(hipcc_executable hipcc)
-message(STATUS "hipcc executable: ${hipcc_executable}")
+
+## Check for compiler version
+find_program(compiler_executable ${COMPILER_EXE_NAME})
+message(STATUS "${COMPILER_EXE_NAME} executable: ${compiler_executable}")
 execute_process(
-  COMMAND         bash "-c" "${hipcc_executable} --version | grep 'HIP version' | awk -F\" \" '{ printf $3}' | awk -F\"-\" '{ printf $1}'"
-  OUTPUT_VARIABLE hipcc_version_string)
-message(STATUS "hipcc version:    ${hipcc_version_string}")
+  COMMAND         bash "-c" "${compiler_executable} --version | grep \"${COMPILER_GREP_STRING}\" | ${COMPILER_AWK_CMD}"
+  OUTPUT_VARIABLE compiler_version_string)
+message(STATUS "${COMPILER_EXE_NAME} version:    ${compiler_version_string}")
+
+## Check for HIP version
+find_program(hipconfig_executable hipconfig)
+message(STATUS "hipconfig executable: ${hipconfig_executable}")
+execute_process(
+  COMMAND         bash "-c" "${hipconfig_executable} -v | awk -F\"-\" '{ printf $1 }'"
+  OUTPUT_VARIABLE hip_version_string)
+message(STATUS "${COMPILER_EXE_NAME} HIP version:    ${hip_version_string}")
 
 ## Check for ROCm version
 execute_process(
@@ -153,20 +187,25 @@ else()
     message(WARNING "Failed to extract ROCm version.")
 endif()
 
+### Required for checking HIP device symbols when building with amdclang++
+set(CMAKE_REQUIRED_LIBRARIES hip::device)
+
 ### Check for hipDeviceMallocUncached support
 check_symbol_exists("hipDeviceMallocUncached" "hip/hip_runtime_api.h" HIP_UNCACHED_MEMORY)
 
 ### Check for hipDeviceMallocContiguous support
 check_symbol_exists("hipDeviceMallocContiguous" "hip/hip_runtime_api.h" HIP_CONTIGUOUS_MEMORY)
 
+unset(CMAKE_REQUIRED_LIBRARIES)
+
 ### Check for indirect function call support
 if(ENABLE_IFC)
-  if(${hipcc_version_string} VERSION_GREATER_EQUAL "5.5.30201")
+  if(${hip_version_string} VERSION_GREATER_EQUAL "5.5.30201")
     set(IFC_ENABLED ON)
     message(STATUS "Indirect function call enabled")
   else()
     set(IFC_ENABLED OFF)
-    message(WARNING "Indirect function call disabled - requires hipcc version >= 5.5.30201")
+    message(WARNING "Indirect function call disabled - requires HIP version >= 5.5.30201")
   endif()
 endif()
 
@@ -203,6 +242,9 @@ if(BUILD_BFD)
   if (HAVE_BFD)
     message(STATUS "-- Found BFD support")
 
+    ### Required for checking HIP device symbols when building with amdclang++
+    set(CMAKE_REQUIRED_LIBRARIES hip::device)
+
     # Check for specific BFD feature support
     CHECK_SYMBOL_EXISTS(bfd_get_section_flags "bfd.h" HAVE_DECL_BFD_GET_SECTION_FLAGS)
     CHECK_SYMBOL_EXISTS(bfd_get_section_vma   "bfd.h" HAVE_DECL_BFD_GET_SECTION_VMA)
@@ -217,6 +259,8 @@ if(BUILD_BFD)
            return (int)(size);
        }"
       HAVE_TWO_ARG_BFD_SECTION_SIZE)
+
+    unset(CMAKE_REQUIRED_LIBRARIES)
 
     # Check for iberty support
     find_library(HAVE_IBERTY iberty PATHS /usr/lib64 /usr/lib/ PATH_SUFFIXES x86_64-linux-gnu)
@@ -240,6 +284,15 @@ endif()
 check_cxx_compiler_flag("-mllvm --amdgpu-kernarg-preload-count=16" HAVE_KERNARG_PRELOAD)
 if (HAVE_KERNARG_PRELOAD)
   message(STATUS "Kernarg preloading to SGPR enabled")
+endif()
+
+## Disable building MSCCL++ if the build environment is invalid
+## Currently MSCCL++ is supported only on gfx942
+if (ENABLE_MSCCLPP)
+  if(NOT ("gfx942" IN_LIST GPU_TARGETS OR "gfx942:xnack-" IN_LIST GPU_TARGETS OR "gfx942:xnack+" IN_LIST GPU_TARGETS))
+    set(ENABLE_MSCCLPP OFF)
+    message(WARNING "Can only build MSCCL++ for gfx942; disabling MSCCL++ build")
+  endif()
 endif()
 
 # Determine version from makefiles/version.mk and fill in templates
@@ -355,6 +408,7 @@ set(SRC_FILES
   src/include/align.h
   src/include/alloc.h
   src/include/archinfo.h
+  src/include/api_trace.h
   src/include/argcheck.h
   src/include/BfdBacktrace.hpp
   src/include/bootstrap.h
@@ -373,6 +427,7 @@ set(SRC_FILES
   src/include/git_version.h
   src/include/graph.h
   src/include/group.h
+  src/include/hip_rocm_version_info.h
   src/include/ibvcore.h
   src/include/ibvsymbols.h
   src/include/ibvwrap.h
@@ -441,6 +496,8 @@ set(SRC_FILES
   src/misc/alt_rsmi.cc
   src/misc/archinfo.cc
   src/misc/argcheck.cc
+  src/misc/api_trace.c
+  src/misc/api_trace.cc
 # src/misc/cudawrap.cc
 # src/misc/gdrwrap.cc
   src/misc/ibvsymbols.cc
@@ -481,6 +538,14 @@ if (ENABLE_MSCCL_KERNEL)
   list(APPEND SRC_FILES ${MSCCL_KERNEL_SOURCES})
 endif()
 
+if (ENABLE_MSCCLPP)
+  set(MSCCLPP_SOURCES
+    src/include/mscclpp/mscclpp_nccl.h
+    src/misc/mscclpp/mscclpp_nccl.cc
+  )
+  list(APPEND SRC_FILES ${MSCCLPP_SOURCES})
+endif()
+
 # Hipify source files (copy of source generated into hipify directory)
 #==================================================================================================
 find_program(hipify-perl_executable hipify-perl)
@@ -507,7 +572,9 @@ foreach(SRC_FILE ${SRC_FILES})
   # Create a custom command to create hipified source code
   add_custom_command(
     OUTPUT ${HIP_FILE}
-    COMMAND mkdir -p ${HIP_FILE_DIR} && $ ${hipify-perl_executable} -quiet-warnings ${CMAKE_SOURCE_DIR}/${SRC_FILE} -o ${HIP_FILE}
+    COMMAND mkdir -p ${HIP_FILE_DIR}
+            && ${hipify-perl_executable} -quiet-warnings ${CMAKE_SOURCE_DIR}/${SRC_FILE} -o ${HIP_FILE}
+            && ${CMAKE_COMMAND} -DHIP_FILE=${HIP_FILE} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/scripts/AddUnroll.cmake
     MAIN_DEPENDENCY ${SRC_FILE}
     COMMENT "Hipifying ${SRC_FILE} -> ${HIP_FILE}"
   )
@@ -562,6 +629,9 @@ endif()
 if(ENABLE_MSCCL_KERNEL)
   target_compile_definitions(rccl PRIVATE COMPILE_MSCCL_KERNEL)
 endif()
+if(ENABLE_MSCCLPP)
+  target_compile_definitions(rccl PRIVATE ENABLE_MSCCLPP)
+endif()
 if(HAVE_ROCM_SMI64CONFIG)
   target_compile_definitions(rccl PRIVATE USE_ROCM_SMI64CONFIG)
 endif()
@@ -584,14 +654,21 @@ if(TRACE)
 endif()
 if(${HIP_CONTIGUOUS_MEMORY})
   target_compile_definitions(rccl PRIVATE HIP_CONTIGUOUS_MEMORY)
+  message(STATUS "HIP_CONTIGUOUS_MEMORY enabled")
+else()
+  message(STATUS "HIP_CONTIGUOUS_MEMORY disabled")
 endif()
-if(${hipcc_version_string} VERSION_GREATER_EQUAL "5.7.31920")
+if(${hip_version_string} VERSION_GREATER_EQUAL "5.7.31920")
   target_compile_definitions(rccl PRIVATE HIP_UNCACHED_MEMORY)
   message(STATUS "HIP_UNCACHED_MEMORY enabled")
 else()
+  message(STATUS "HIP_UNCACHED_MEMORY disabled - requires HIP version >= 5.7.31920")
   # keep --hipcc-func-supp on older HIP and compiler
   if(NOT IFC_ENABLED)
     target_compile_options(rccl PRIVATE --hipcc-func-supp)
+    message(STATUS "--hipcc-func-supp enabled")
+  else()
+    message(STATUS "--hipcc-func-supp disabled")
   endif()
 endif()
 if (BUILD_BFD)
@@ -615,10 +692,12 @@ if(DEMANGLE_DIR)
   target_compile_definitions(rccl PRIVATE "HAVE_CPLUS_DEMANGLE=1")
   target_compile_definitions(rccl PRIVATE "HAVE_DECL_BASENAME=1")
 endif()
-if(${hipcc_version_string} VERSION_GREATER_EQUAL "6.1.33591")
+if(${hip_version_string} VERSION_GREATER_EQUAL "6.1.33591")
   set(LL128_ENABLED ON)
-	target_compile_definitions(rccl PRIVATE ENABLE_LL128)
-	message(STATUS "RCCL LL128 protocol enabled")
+  target_compile_definitions(rccl PRIVATE ENABLE_LL128)
+  message(STATUS "RCCL LL128 protocol enabled")
+else()
+  message(STATUS "RCCL LL128 protocol disabled - requires HIP version >= 6.1.33591")
 endif()
 
 ## Set RCCL compile options
@@ -646,6 +725,21 @@ endif()
 ## Set RCCL linked library directories
 target_link_directories(rccl PRIVATE ${ROCM_SMI_LIB_DIR})
 
+if (ROCM_VERSION VERSION_GREATER_EQUAL "60100")
+    option(RCCL_ROCPROFILER_REGISTER "Enable rocprofiler-register support" ON)
+else()
+    if(RCCL_ROCPROFILER_REGISTER)
+        message(AUTHOR_WARNING "RCCL_ROCPROFILER_REGISTER is not valid option for ROCm < 6.2. Current ROCm version: ${ROCM_VERSION}")
+    endif()
+    set(RCCL_ROCPROFILER_REGISTER OFF CACHE BOOL "" FORCE)
+endif()
+if(RCCL_ROCPROFILER_REGISTER)
+  find_package(rocprofiler-register REQUIRED)
+  target_compile_definitions(rccl PRIVATE RCCL_ROCPROFILER_REGISTER=1)
+  target_link_libraries(
+      rccl PRIVATE rocprofiler-register::rocprofiler-register)
+endif()
+
 ## Set RCCL linked libraries
 if (HAVE_BFD)
   target_link_libraries(rccl PRIVATE bfd)
@@ -662,9 +756,35 @@ target_link_libraries(rccl INTERFACE hip::host)
 target_link_libraries(rccl PRIVATE   hip::device)
 target_link_libraries(rccl PRIVATE   dl)
 target_link_libraries(rccl PRIVATE   ${ROCM_SMI_LIBRARIES})
+if(ENABLE_MSCCLPP)
+  target_link_libraries(rccl PRIVATE mscclpp_nccl)
+endif()
 
 ## Set RCCL link options
-target_link_options(rccl PRIVATE -parallel-jobs=16)       # Use multiple threads to link
+## Find out available memory
+execute_process(
+  COMMAND bash "-c" "cat /sys/fs/cgroup/memory.max"
+  OUTPUT_VARIABLE memory_max_string)
+if (${memory_max_string} MATCHES "^[0-9]+")
+  math(EXPR memory_in_gb "${memory_max_string} / (1024 * 1024 * 1024)")
+else()
+  execute_process(
+    COMMAND bash "-c" "cat /sys/fs/cgroup/memory/memory.limit_in_bytes"
+    OUTPUT_VARIABLE memory_max_string)
+  if (${memory_max_string} MATCHES "^[0-9]+")
+    math(EXPR memory_in_gb "${memory_max_string} / (1024 * 1024 * 1024)")
+  else()
+    cmake_host_system_information(RESULT memory_max_string QUERY AVAILABLE_PHYSICAL_MEMORY )
+    math(EXPR memory_in_gb "${memory_max_string} / 1024")
+  endif()
+endif()
+## Reserve 16GB for each linker job. Limit max number of linker jobs to 16
+math(EXPR num_linker_jobs "(${memory_in_gb} + 15) / 16")
+if (${num_linker_jobs} GREATER_EQUAL "16")
+  set(num_linker_jobs "16")
+endif()
+message(STATUS "Use ${num_linker_jobs} jobs for linking")
+target_link_options(rccl PRIVATE -parallel-jobs=${num_linker_jobs})       # Use multiple threads to link
 if(BUILD_ADDRESS_SANITIZER)
   target_link_options(rccl PRIVATE -fuse-ld=lld)
 endif()
@@ -681,6 +801,11 @@ if (HAVE_KERNARG_PRELOAD)
   target_link_options(rccl PRIVATE -Xoffload-linker -mllvm=-amdgpu-kernarg-preload-count=16)
 endif()
 
+if(ENABLE_MSCCLPP)
+  include(cmake/MSCCLPP.cmake)
+  message(STATUS "Building MSCCL++ with NCCL API support")
+endif()
+
 ## Track linking time
 set_property(TARGET rccl PROPERTY RULE_LAUNCH_LINK "${CMAKE_COMMAND} -E time")
 
@@ -693,6 +818,8 @@ rocm_set_soversion(rccl "1.0")
 rocm_install_targets(TARGETS rccl)
 rocm_install(FILES       ${PROJECT_BINARY_DIR}/include/rccl/rccl.h src/include/nccl_net.h
              DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rccl)
+rocm_install(FILES       src/include/api_trace.h
+             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rccl/amd_detail)
 file(COPY tools/msccl-algorithms DESTINATION ${PROJECT_BINARY_DIR})
 file(COPY tools/msccl-unit-test-algorithms DESTINATION ${PROJECT_BINARY_DIR})
 ## Install Algorithm files under share folder

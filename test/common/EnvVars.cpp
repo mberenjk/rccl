@@ -9,13 +9,15 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <iostream>
+#include <unordered_map>
 
 namespace RcclUnitTesting
 {
   int const UT_SINGLE_PROCESS = (1<<0);
   int const UT_MULTI_PROCESS  = (1<<1);
 
-  int getArchInfo(bool *isRightArch)
+  int getArchInfo(bool *isRightArch,  const char *gfx)
   {
     // Prepare parent->child pipe
     int pipefd[2];
@@ -25,7 +27,7 @@ namespace RcclUnitTesting
     }
     pid_t pid = fork();
     if (0 == pid) {
-      bool isGfx94 = false;
+      bool isGfxTest = false;
       int dev;
       hipGetDeviceCount(&dev);
       for (int deviceId = 0; deviceId < dev; deviceId++) {
@@ -34,14 +36,14 @@ namespace RcclUnitTesting
         hipGetDeviceProperties(&devProp, deviceId);
         char *gcnArchNameToken = strtok(devProp.gcnArchName, ":");
         strcpy(gcn, gcnArchNameToken);
-        if(std::strncmp("gfx94", gcn, 5) == 0) {
-          isGfx94 = true;
+        if(std::strncmp(gfx, gcn, 5) == 0) {
+          isGfxTest = true;
         } else {
-          isGfx94 = false;
+          isGfxTest = false;
           break;
         }
       }
-      if (write(pipefd[1], &isGfx94, sizeof(isGfx94)) != sizeof(isGfx94)) return TEST_FAIL;
+      if (write(pipefd[1], &isGfxTest, sizeof(isGfxTest)) != sizeof(isGfxTest)) return TEST_FAIL;
       close(pipefd[0]);
       close(pipefd[1]);
       exit(EXIT_SUCCESS);
@@ -88,19 +90,55 @@ namespace RcclUnitTesting
     return TEST_SUCCESS;
   }
 
+  int getDeviceMode (bool *cpxMode){
+    // Prepare parent->child pipe
+    int pipefd[2];
+    if (pipe(pipefd) == -1)
+    {
+      ERROR("Unable to create parent->child pipe for getting the device mode\n");
+      return TEST_FAIL;
+    }
+    pid_t pid = fork();
+    if (0 == pid)
+    {
+      bool isCpxMode = false;
+      int numDeviceCUs;
+      int deviceIdx = 0;
+      hipDeviceGetAttribute(&numDeviceCUs, hipDeviceAttributeMultiprocessorCount, deviceIdx);
+      if(numDeviceCUs == 20 || numDeviceCUs == 38) isCpxMode = true;
+      if (write(pipefd[1], &isCpxMode, sizeof(isCpxMode)) != sizeof(isCpxMode)) return TEST_FAIL;
+      close(pipefd[0]);
+      close(pipefd[1]);
+      exit(EXIT_SUCCESS);
+    }
+    else {
+      int status;
+      if (read(pipefd[0], cpxMode, sizeof(*cpxMode)) != sizeof(*cpxMode)) return TEST_FAIL;
+      waitpid(pid, &status, 0);
+      assert(!status);
+      close(pipefd[0]);
+      close(pipefd[1]);
+    }
+    return TEST_SUCCESS;
+    return 0;
+  }
+
+
   EnvVars::EnvVars()
   {
     // Collect number of GPUs available
     // NOTE: Cannot use HIP call prior to launching unless it is inside another child process
     numDetectedGpus = 0;
     getDeviceCount(&numDetectedGpus);
+    numDetectedGpus = min(numDetectedGpus, 16);
     isGfx94 = false;
-    getArchInfo(&isGfx94);
+    getArchInfo(&isGfx94, "gfx94");
+    isGfx12 = false;
+    getArchInfo(&isGfx12, "gfx12");
 
     showNames      = GetEnvVar("UT_SHOW_NAMES"  , 1);
     minGpus        = GetEnvVar("UT_MIN_GPUS"    , 2);
     maxGpus        = GetEnvVar("UT_MAX_GPUS"    , numDetectedGpus);
-    onlyPow2Gpus   = GetEnvVar("UT_POW2_GPUS"   , false);
     processMask    = GetEnvVar("UT_PROCESS_MASK", UT_SINGLE_PROCESS | UT_MULTI_PROCESS);
     verbose        = GetEnvVar("UT_VERBOSE"     , 0);
     printValues    = GetEnvVar("UT_PRINT_VALUES", 0);
@@ -112,6 +150,13 @@ namespace RcclUnitTesting
 
     // Total number of reduction ops
     int numOps = ncclNumOps;
+
+    bool isCpxMode = false;
+    if(isGfx94) {
+      getDeviceMode(&isCpxMode);
+    }
+    // Test only pow2 number of GPUs for cpx mode to reduce the runtime for UT
+    onlyPow2Gpus   = GetEnvVar("UT_POW2_GPUS"   , isCpxMode); // Default value set based on whether system is in CPX mode. UT_POW2_GPUS set by user overrides it.
 
     std::vector<std::string> redOpStrings = GetEnvVarsList("UT_REDOPS");
     for (auto s : redOpStrings)

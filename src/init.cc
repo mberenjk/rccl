@@ -42,17 +42,26 @@
 // [RCCL]
 #include "git_version.h"
 #include "rccl_vars.h"
+#include "hip_rocm_version_info.h"
 //#include "clique/CliqueManager.h"
 //#include <hsa/hsa_ext_amd.h>
+#ifdef ENABLE_MSCCLPP
+#include "mscclpp/mscclpp_nccl.h"
+#endif
 // [/RCCL]
 
 #include "msccl/msccl_lifecycle.h"
 #include "msccl/msccl_status.h"
 
-#define STR2(v) #v
-#define STR(v) STR2(v)
+#ifndef STR2
+  #define STR2(v) #v
+#endif
 
-#if CUDART_VERSION >= 9020 || defined(__HIP_PLATFORM_AMD__) || defined(__HCC__) || defined(__HIPCC__)
+#ifndef STR
+  #define STR(v) STR2(v)
+#endif
+
+#if CUDART_VERSION >= 9020 || defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
 #define NCCL_GROUP_CUDA_STREAM 0 // CGMD: CUDA 9.2,10.X Don't need to use an internal CUDA stream
 #else
 #define NCCL_GROUP_CUDA_STREAM 1 // CGMD: CUDA 9.0,9.1 Need to use an internal CUDA stream
@@ -82,6 +91,23 @@ static uint64_t hashUniqueId(ncclUniqueId const &id) {
   }
   return h;
 }
+
+#ifdef ENABLE_MSCCLPP
+size_t std::hash<ncclUniqueId>::operator ()(const ncclUniqueId& uniqueId) const noexcept {
+  return (size_t)hashUniqueId(uniqueId);
+}
+
+bool operator ==(const ncclUniqueId& a, const ncclUniqueId& b) {
+  return memcmp(a.internal, b.internal, NCCL_UNIQUE_ID_BYTES) == 0;
+}
+
+RCCL_PARAM(MscclppThreshold, "MSCCLPP_THRESHOLD", (size_t)(1024*1024));
+static constexpr int64_t defaultEnableMscclpp = 1;
+#else
+static constexpr int64_t defaultEnableMscclpp = 0;
+#endif
+
+RCCL_PARAM(MscclppEnabled, "MSCCLPP_ENABLE", defaultEnableMscclpp);
 
 // GDRCOPY support: Off by default
 NCCL_PARAM(GdrCopyEnable, "GDRCOPY_ENABLE", 0);
@@ -151,14 +177,14 @@ static ncclResult_t ncclInit() {
 }
 
 NCCL_API(ncclResult_t, ncclGetVersion, int* version);
-ncclResult_t ncclGetVersion(int* version) {
+ncclResult_t ncclGetVersion_impl(int* version) {
   if (version == NULL) return ncclInvalidArgument;
   *version = NCCL_VERSION_CODE;
   return ncclSuccess;
 }
 
 NCCL_API(ncclResult_t, ncclGetUniqueId, ncclUniqueId* out);
-ncclResult_t ncclGetUniqueId(ncclUniqueId* out) {
+ncclResult_t ncclGetUniqueId_impl(ncclUniqueId* out) {
   NCCLCHECK(ncclInit());
   NCCLCHECK(PtrCheck(out, "GetUniqueId", "out"));
   ncclResult_t res = bootstrapGetUniqueId((struct ncclBootstrapHandle*)out);
@@ -682,18 +708,41 @@ fail:
 }
 
 // Pre-process the string so that running "strings" on the lib can quickly reveal the version.
-#if defined(__HIP_PLATFORM_AMD__) || defined(__HCC__) || defined(__HIPCC__)
-#define VERSION_STRING "RCCL version " STR(NCCL_MAJOR) "." STR(NCCL_MINOR) "." STR(NCCL_PATCH) NCCL_SUFFIX "+hip" STR(HIP_VERSION_MAJOR) "." STR(HIP_VERSION_MINOR)
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+#define VERSION_STRING "RCCL version : " STR(NCCL_MAJOR) "." STR(NCCL_MINOR) "." STR(NCCL_PATCH) NCCL_SUFFIX
+#define VERSION_STRING_EXTENDED "HIP version  : " HIP_BUILD_INFO "\nROCm version : " ROCM_BUILD_INFO
 #else
-#define VERSION_STRING "NCCL version " STR(NCCL_MAJOR) "." STR(NCCL_MINOR) "." STR(NCCL_PATCH) NCCL_SUFFIX "+cuda" STR(CUDA_MAJOR) "." STR(CUDA_MINOR)
+#define VERSION_STRING "NCCL version " STR(NCCL_MAJOR) "." STR(NCCL_MINOR) "." STR(NCCL_PATCH) NCCL_SUFFIX
+#define VERSION_STRING_EXTENDED "CUDA version " STR(CUDA_MAJOR) "." STR(CUDA_MINOR)
 #endif
 static void showVersion() {
   static int shown = 0;
   if (shown == 0 && ncclDebugLevel >= NCCL_LOG_VERSION) {
-    printf("%s %s\n", VERSION_STRING, rcclGitHash);
+    char hostInfo[HOST_NAME_MAX] = {}, libPathInfo[2048] = {};
+    size_t hostInfoSize = sizeof(hostInfo), libPathInfoSize = sizeof(libPathInfo);
+
+    // Retrieve Hostname info
+    if (gethostname(hostInfo, hostInfoSize-1) != 0) {
+      // Returns Unknown in hostInfo if function call unsuccessful
+      strncpy(hostInfo, "Unknown", hostInfoSize-1);
+    }
+
+    // Retrieve librccl path
+    Dl_info pathInfo;
+    if (dladdr((void*)ncclCommInitRank, &pathInfo)) {
+      strncpy(libPathInfo, pathInfo.dli_fname, libPathInfoSize-1);
+    } else {
+      // Sets libPath to Unknown if the above function call is not successful
+      strncpy(libPathInfo, "Unknown", libPathInfoSize-1);
+    }
+
+    printf("%s-%s\n%s\n", VERSION_STRING, rcclGitHash, VERSION_STRING_EXTENDED);
+    printf("%-12s : %s\n%-12s : %s\n", "Hostname", hostInfo, "Librccl path", libPathInfo);
     fflush(stdout);
-    if (ncclDebugFile != stdout)
-      INFO(NCCL_ALL,"%s %s", VERSION_STRING, rcclGitHash); // Also log NCCL version in one of the files
+    if (ncclDebugFile != stdout) {
+      INFO(NCCL_ALL, "%s-%s\n%s\n", VERSION_STRING, rcclGitHash, VERSION_STRING_EXTENDED); // Also log NCCL version in one of the files
+      INFO(NCCL_ALL, "%-12s : %s\n%-12s : %s\n", "Hostname", hostInfo, "Librccl path", libPathInfo);
+    }
     shown = 1;
   }
 }
@@ -737,7 +786,7 @@ static ncclResult_t fillInfo(struct ncclComm* comm, struct ncclPeerInfo* info, u
   info->comm = comm;
   info->cudaCompCap = comm->minCompCap = comm->maxCompCap = comm->compCap;
 
-#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HCC__) && !defined(__HIPCC__)
+#if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
   // MNNVL support
   {
     // MNNVL: Request the fabric UUID and partition info
@@ -1849,6 +1898,9 @@ fail:
 static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
   struct ncclCommInitRankAsyncJob* job = (struct ncclCommInitRankAsyncJob*)job_;
   ncclComm_t comm = job->comm;
+#ifdef ENABLE_MSCCLPP
+  ncclUniqueId origUniqueId = job->commId;
+#endif
   ncclResult_t res = ncclSuccess;
   int archMajor, archMinor;
   size_t maxLocalSizeBytes = 0;
@@ -1901,6 +1953,59 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
 
   NCCLCHECKGOTO(initTransportsRank(comm, job->parent), res, fail);
 
+#ifdef ENABLE_MSCCLPP
+  if (job->parent) {
+    if (job->parent->mscclppCompatible) {
+      INFO(NCCL_INIT, "MSCCL++: Splitting a compatible communicator; using parent mscclpp_comm");
+      comm->mscclppCompatible = true;
+      comm->mscclpp_threshold = job->parent->mscclpp_threshold;
+      comm->mscclpp_comm = job->parent->mscclpp_comm;
+      auto& mscclppUniqueId = mscclpp_uniqueIdMap[origUniqueId];
+      mscclpp_uniqueIdMap[job->commId] = mscclppUniqueId;
+      mscclpp_uniqueIdReverseMap[mscclppUniqueId].insert(job->commId);
+      ncclCommToUniqueIdMap[comm] = job->commId;
+    }
+  }
+  else
+#endif
+  if (rcclParamMscclppEnabled()) {
+#ifdef ENABLE_MSCCLPP
+    if (mscclEnabled() && (comm->topo->mscclEnabled || mscclForceEnabled()) && mscclppCommCompatible(comm)) {
+      hipDeviceProp_t devProp;
+      CUDACHECK(hipGetDeviceProperties(&devProp, cudaDev));
+      comm->mscclppCompatible = IsArchMatch(devProp.gcnArchName, "gfx94");
+      if (comm->mscclppCompatible) {
+        bool mapContainsId = (mscclpp_uniqueIdMap.count(job->commId) > 0);
+        auto& mscclppUniqueId = mscclpp_uniqueIdMap[job->commId];
+        if (comm->localRank == 0 && !mapContainsId) {
+          NCCLCHECKGOTO(mscclpp_ncclGetUniqueId(&mscclppUniqueId), res, fail);
+          TRACE_CALL("mscclpp_ncclGetUniqueId(0x%llx)", (unsigned long long)hashUniqueId(mscclppUniqueId));
+        }
+
+        NCCLCHECKGOTO(bootstrapIntraNodeBroadcast(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, 0, &mscclppUniqueId, sizeof(mscclppUniqueId)), res, fail);
+        unsigned long long mscclppUniqueIdHash; (void)mscclppUniqueIdHash;
+        TRACE_CALL("bootstrapIntraNodeBroadcast(rank=%d, nranks=%d, root=%d, bcastData=hash:0x%llx)", comm->localRank, comm->localRanks, 0, (mscclppUniqueIdHash = (unsigned long long)hashUniqueId(mscclppUniqueId)));
+        mscclpp_uniqueIdReverseMap[mscclppUniqueId].insert(job->commId);
+
+        comm->mscclpp_threshold = rcclParamMscclppThreshold();
+        INFO(NCCL_INIT, "MSCCL++: Enabled! Msg size threshold=%zu", comm->mscclpp_threshold);
+
+        NCCLCHECKGOTO(mscclpp_ncclCommInitRank(&(comm->mscclpp_comm), job->nranks, mscclppUniqueId, job->myrank), res, fail);
+        TRACE_CALL("mscclpp_ncclCommInitRank (*comm=%p, nranks=%d, commId=hash:0x%llx, myrank=%d)", comm->mscclpp_comm, job->nranks, mscclppUniqueIdHash, job->myrank);
+        mscclpp_commToUniqueIdMap[comm->mscclpp_comm] = mscclppUniqueId;
+        ncclCommToUniqueIdMap[comm] = job->commId;
+      } else {
+        WARN("MSCCL++: Cannot enable MSCCL++ on %s architecture", devProp.gcnArchName);
+      }
+    } else {
+      comm->mscclppCompatible = false;
+      WARN("MSCCL++: Cannot enable MSCCL++; environment is not MSCCL compatible");
+    }
+#else
+    WARN("MSCCL++: Feature not enabled. ENABLE_MSCCLPP must be defined at compile-time to enable this feature.");
+#endif
+  }
+
   NCCLCHECKGOTO(ncclLoadTunerPlugin(&comm->tuner), res, fail);
   if (comm->tuner) {
     NCCLCHECK(comm->tuner->init(comm->nRanks, comm->nNodes, ncclDebugLog));
@@ -1921,7 +2026,7 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
   }
 
 
-  INFO(NCCL_INIT,"comm %p rank %d nranks %d cudaDev %d busId %lx commId 0x%llx localSize %zi used %ld bytes - Init COMPLETE", comm, comm->rank, comm->nRanks, comm->cudaDev, comm->busId, (unsigned long long)hashUniqueId(job->commId), maxLocalSizeBytes, allocTracker[comm->cudaDev].totalAllocSize);
+  INFO(NCCL_INIT,"comm %p rank %d nranks %d cudaDev %d busId %lx commId 0x%llx localSize %zi used %ld bytes on core %d - Init COMPLETE", comm, comm->rank, comm->nRanks, comm->cudaDev, comm->busId, (unsigned long long)hashUniqueId(job->commId), maxLocalSizeBytes, allocTracker[comm->cudaDev].totalAllocSize, sched_getcpu());
 exit:
   if (job->newcomm) {
     /* assign it to user pointer. */
@@ -2172,7 +2277,7 @@ constexpr nvtxPayloadSchemaEntry_t CommInitRankSchema[] = {
 };
 
 NCCL_API(ncclResult_t, ncclCommInitRank, ncclComm_t* newcomm, int nranks, ncclUniqueId commId, int myrank);
-ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId commId, int myrank) {
+ncclResult_t ncclCommInitRank_impl(ncclComm_t* newcomm, int nranks, ncclUniqueId commId, int myrank) {
   // Load the CUDA driver and dlsym hooks (can fail on old drivers)
   rocmLibraryInit();
 
@@ -2188,7 +2293,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
 }
 
 NCCL_API(ncclResult_t, ncclCommInitAll, ncclComm_t* comms, int ndev, const int* devlist);
-ncclResult_t ncclCommInitAll(ncclComm_t* comms, int ndev, const int* devlist) {
+ncclResult_t ncclCommInitAll_impl(ncclComm_t* comms, int ndev, const int* devlist) {
   ncclResult_t ret = ncclSuccess;
   int totalnDev;
   int *gpuFlags = NULL;
@@ -2256,7 +2361,7 @@ ncclResult_t ncclCommSetAsyncError(ncclComm_t comm, ncclResult_t nextState) {
 }
 
 NCCL_API(ncclResult_t, ncclCommInitRankConfig, ncclComm_t* comm, int nranks, ncclUniqueId commId, int myrank, ncclConfig_t *config);
-ncclResult_t ncclCommInitRankConfig(ncclComm_t *newcomm, int nranks, ncclUniqueId commId, int myrank, ncclConfig_t *config) {
+ncclResult_t ncclCommInitRankConfig_impl(ncclComm_t *newcomm, int nranks, ncclUniqueId commId, int myrank, ncclConfig_t *config) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
   int cudaDev;
   ncclResult_t ret = ncclSuccess;
@@ -2379,7 +2484,7 @@ fail:
 }
 
 NCCL_API(ncclResult_t, ncclCommFinalize, ncclComm_t comm);
-ncclResult_t ncclCommFinalize(ncclComm_t comm) {
+ncclResult_t ncclCommFinalize_impl(ncclComm_t comm) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
   ncclResult_t ret = ncclSuccess;
 
@@ -2493,11 +2598,34 @@ fail:
 }
 
 NCCL_API(ncclResult_t, ncclCommDestroy, ncclComm_t comm);
-ncclResult_t ncclCommDestroy(ncclComm_t comm) {
+ncclResult_t ncclCommDestroy_impl(ncclComm_t comm) {
   if (comm == NULL) {
     NVTX3_FUNC_RANGE_IN(nccl_domain);
     return ncclSuccess;
   }
+
+#ifdef ENABLE_MSCCLPP
+  if (comm->mscclppCompatible) {
+    auto& mscclppUniqueId = mscclpp_commToUniqueIdMap[comm->mscclpp_comm];
+    auto& uniqueIds = mscclpp_uniqueIdReverseMap[mscclppUniqueId];
+    auto& ncclUniqueId = ncclCommToUniqueIdMap[comm];
+    if (uniqueIds.find(ncclUniqueId) == uniqueIds.end()) {
+      WARN("MSCCL++: comm=%p not found in mscclpp_uniqueIdReverseMap for key=%p", comm, comm->mscclpp_comm);
+    }
+    uniqueIds.erase(ncclUniqueId);
+    if (uniqueIds.size() == 0) {
+      mscclpp_uniqueIdReverseMap.erase(mscclppUniqueId);
+      ncclResult_t res = mscclpp_ncclCommDestroy(comm->mscclpp_comm);
+      TRACE_CALL("mscclpp_ncclCommDestroy");
+      if (res != ncclSuccess) {
+        WARN("MSCCL++: mscclpp_ncclCommDestroy failed (%s)", ncclGetErrorString(res));
+      }
+    }
+
+    comm->mscclppCompatible = false;
+    comm->mscclpp_comm = nullptr;
+  }
+#endif
 
   int rank = comm->rank, nranks = comm->nRanks, cudaDev = comm->cudaDev;
 
@@ -2522,7 +2650,7 @@ ncclResult_t ncclCommDestroy(ncclComm_t comm) {
 }
 
 NCCL_API(ncclResult_t, ncclCommAbort, ncclComm_t comm);
-ncclResult_t ncclCommAbort(ncclComm_t comm) {
+ncclResult_t ncclCommAbort_impl(ncclComm_t comm) {
   if (comm == NULL) {
     NVTX3_FUNC_RANGE_IN(nccl_domain);
     return ncclSuccess;
@@ -2554,7 +2682,7 @@ ncclResult_t ncclCommAbort(ncclComm_t comm) {
 }
 
 NCCL_API(ncclResult_t, ncclCommSplit, ncclComm_t comm, int color, int key, ncclComm_t *newcomm, ncclConfig_t *config);
-ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t *newcomm, ncclConfig_t *config) {
+ncclResult_t ncclCommSplit_impl(ncclComm_t comm, int color, int key, ncclComm_t *newcomm, ncclConfig_t *config) {
   struct ncclCommInitRankAsyncJob *job = NULL;
   struct ncclComm* childComm = NCCL_COMM_NULL;
   ncclResult_t res = ncclSuccess;
@@ -2618,7 +2746,7 @@ fail:
 }
 
 NCCL_API(const char*, ncclGetErrorString, ncclResult_t code);
-const char* ncclGetErrorString(ncclResult_t code) {
+const char* ncclGetErrorString_impl(ncclResult_t code) {
   switch (code) {
     case ncclSuccess                : return "no error";
     case ncclUnhandledCudaError     : return "unhandled cuda error (run with NCCL_DEBUG=INFO for details)";
@@ -2636,12 +2764,12 @@ const char* ncclGetErrorString(ncclResult_t code) {
  * comm is currently unused and can be set to NULL
  */
 NCCL_API(const char*, ncclGetLastError, const ncclComm_t comm);
-const char* ncclGetLastError(ncclComm_t comm) {
+const char* ncclGetLastError_impl(ncclComm_t comm) {
   return ncclLastError;
 }
 
 NCCL_API(ncclResult_t, ncclCommGetAsyncError, ncclComm_t comm, ncclResult_t *asyncError);
-ncclResult_t ncclCommGetAsyncError(ncclComm_t comm, ncclResult_t *asyncError) {
+ncclResult_t ncclCommGetAsyncError_impl(ncclComm_t comm, ncclResult_t *asyncError) {
   NCCLCHECK(PtrCheck(comm, "ncclGetAsyncError", "comm"));
   NCCLCHECK(PtrCheck(asyncError, "ncclGetAsyncError", "asyncError"));
 
@@ -2651,7 +2779,7 @@ ncclResult_t ncclCommGetAsyncError(ncclComm_t comm, ncclResult_t *asyncError) {
 }
 
 NCCL_API(ncclResult_t, ncclCommCount, const ncclComm_t comm, int* count);
-ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
+ncclResult_t ncclCommCount_impl(const ncclComm_t comm, int* count) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
 
   NCCLCHECK(PtrCheck(comm, "CommCount", "comm"));
@@ -2665,7 +2793,7 @@ ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
 }
 
 NCCL_API(ncclResult_t, ncclCommCuDevice, const ncclComm_t comm, int* devid);
-ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* devid) {
+ncclResult_t ncclCommCuDevice_impl(const ncclComm_t comm, int* devid) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
 
   NCCLCHECK(PtrCheck(comm, "CommCuDevice", "comm"));
@@ -2678,7 +2806,7 @@ ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* devid) {
 }
 
 NCCL_API(ncclResult_t, ncclCommUserRank, const ncclComm_t comm, int* rank);
-ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
+ncclResult_t ncclCommUserRank_impl(const ncclComm_t comm, int* rank) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
 
   NCCLCHECK(PtrCheck(comm, "CommUserRank", "comm"));
@@ -2691,7 +2819,7 @@ ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
 }
 
 NCCL_API(ncclResult_t, ncclMemAlloc, void **ptr, size_t size);
-ncclResult_t  ncclMemAlloc(void **ptr, size_t size) {
+ncclResult_t  ncclMemAlloc_impl(void **ptr, size_t size) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
   ncclResult_t ret = ncclSuccess;
 
@@ -2768,7 +2896,7 @@ fail:
 }
 
 NCCL_API(ncclResult_t, ncclMemFree, void *ptr);
-ncclResult_t  ncclMemFree(void *ptr) {
+ncclResult_t  ncclMemFree_impl(void *ptr) {
   NVTX3_FUNC_RANGE_IN(nccl_domain);
   ncclResult_t ret = ncclSuccess;
   int saveDevice;

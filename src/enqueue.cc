@@ -20,6 +20,7 @@
 #include "rccl_vars.h"
 #include "transport.h"
 #include "common.h"
+#include "api_trace.h"
 #include <cassert>
 #include <cstring> // std::memcpy
 #include <cinttypes> // PRIx64
@@ -30,13 +31,16 @@ struct ncclKernelMatch {
 };
 
 #ifdef ENABLE_COLLTRACE
-static ncclKernelMatch const ncclKerns[2] = {
+static ncclKernelMatch const ncclKerns[4] = {
   {(void *)ncclDevKernel_Generic, true},
+  {(void *)ncclDevKernel_Generic_4, true},
   {(void *)ncclDevKernelDebug_Generic, true},
+  {(void *)ncclDevKernelDebug_Generic_4, true},
 };
 #else
-static ncclKernelMatch const ncclKerns[1] = {
-  {(void*)ncclDevKernel_Generic, true}
+static ncclKernelMatch const ncclKerns[2] = {
+  {(void*)ncclDevKernel_Generic, true},
+  {(void*)ncclDevKernel_Generic_4, true},
 };
 #endif
 
@@ -56,6 +60,21 @@ static ncclResult_t computeCollWorkFunc(struct ncclInfo* collInfo);
 static ncclResult_t getPatternInfo(struct ncclInfo* collInfo);
 static ncclResult_t getLoopInfo(struct ncclInfo* collInfo);
 static ncclResult_t getCollNetSupport(struct ncclInfo* info, int* collNetSupport);
+
+int ncclGetKernelIndex(struct ncclComm* comm) {
+#if ENABLE_COLLTRACE
+  int start_idx = comm->collTraceThread ? 2 : 0;
+#else
+  int start_idx = 0;
+#endif
+  hipDeviceProp_t devProp;
+  CUDACHECK(hipGetDeviceProperties(&devProp, comm->cudaDev));
+  if(IsArchMatch(devProp.gcnArchName, "gfx908") || (IsArchMatch(devProp.gcnArchName, "gfx94")
+    && devProp.multiProcessorCount > 80))
+    return start_idx;
+  else
+    return start_idx + 1;
+}
 
 // Returns maximum kernel stack size of all CUDA kernels
 ncclResult_t ncclInitKernelsForDevice(int cudaArch, size_t* maxStackSize) {
@@ -253,7 +272,7 @@ static ncclResult_t computeCollAlignCount(struct ncclInfo* collInfo, size_t* ali
   if (collInfo->protocol == NCCL_PROTO_SIMPLE) {
     *alignCount = NCCL_SIMPLE_ALIGNMENT / ncclTypeSize(collInfo->datatype);
   } else if (collInfo->protocol == NCCL_PROTO_LL128) {
-    // LL128 alignCount should be same as LL for now. NCCL_LL128_ALIGNMENT_PER_WARP needs review 
+    // LL128 alignCount should be same as LL for now. NCCL_LL128_ALIGNMENT_PER_WARP needs review
     *alignCount = NCCL_LL_ALIGNMENT_PER_THREAD / ncclTypeSize(collInfo->datatype) * collInfo->nThreads;
   } else {
     *alignCount = NCCL_LL_ALIGNMENT_PER_THREAD / ncclTypeSize(collInfo->datatype) * collInfo->nThreads;
@@ -573,8 +592,8 @@ static ncclResult_t addP2pToPlan(
   // 1 is connIndex
   struct ncclConnInfo* conn = isSendNotRecv ?
     &comm->channels[channelId].peers[peer]->send[1].conn : &comm->channels[channelId].peers[peer]->recv[1].conn;
-  // do not use LL on gfx11
-  info.protocol = ((conn->buffs[NCCL_PROTO_LL] != nullptr) && bytes <= ncclParamP2pLLThreshold()) ? NCCL_PROTO_LL : NCCL_PROTO_SIMPLE;
+  // do not use LL on gfx12
+  info.protocol = ((conn->buffs[NCCL_PROTO_LL] != nullptr) && bytes <= ncclParamP2pLLThreshold() && !IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx12")) ? NCCL_PROTO_LL : NCCL_PROTO_SIMPLE;
 
   int reg = 0;
   if (info.protocol == NCCL_PROTO_SIMPLE) {
@@ -1627,7 +1646,7 @@ static ncclResult_t getChannnelThreadInfo(struct ncclInfo* collInfo) {
     // Ring/Tree channel tuning
     while (collInfo->nBytes < nc*nt*threadThreshold) {
       if (nc >= 2) nc--;
-#if defined(__HIP_PLATFORM_AMD__) || defined(__HCC__) || defined(__HIPCC__)
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
       // do not reduce threads count on VEGA
 #else
       else if ((nt % 128) == 0) nt/=2;
@@ -1635,7 +1654,7 @@ static ncclResult_t getChannnelThreadInfo(struct ncclInfo* collInfo) {
       else break;
     }
   }
-#if defined(__HIP_PLATFORM_AMD__) || defined(__HCC__) || defined(__HIPCC__)
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
 #else
   if (collInfo->protocol == NCCL_PROTO_SIMPLE) {
     if (collInfo->algorithm == NCCL_ALGO_RING) nt += WARP_SIZE; // Extra warp for sync
@@ -1905,7 +1924,7 @@ static ncclResult_t hostToDevRedOp(
     int64_t i64;
     uint64_t u64;
     half f16;
-    float f32; 
+    float f32;
     double f64;
 #if defined(RCCL_BFLOAT16)
     hip_bfloat16 bf16;
@@ -2152,7 +2171,7 @@ fail:
 }
 
 NCCL_API(ncclResult_t, ncclRedOpCreatePreMulSum, ncclRedOp_t *op, void *scalar, ncclDataType_t datatype, ncclScalarResidence_t residence, ncclComm_t comm);
-ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t *op, void *scalar, ncclDataType_t datatype, ncclScalarResidence_t residence, ncclComm_t comm) {
+ncclResult_t ncclRedOpCreatePreMulSum_impl(ncclRedOp_t *op, void *scalar, ncclDataType_t datatype, ncclScalarResidence_t residence, ncclComm_t comm) {
   NCCLCHECK(PtrCheck(comm, "ncclRedOpCreatePreMulSum", "comm"));
   /* join init thread before creating PreMulSum op. */
   NCCLCHECK(ncclCommEnsureReady(comm));
@@ -2191,7 +2210,7 @@ ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t *op, void *scalar, ncclDataTyp
 }
 
 NCCL_API(ncclResult_t, ncclRedOpDestroy, ncclRedOp_t op, ncclComm_t comm);
-ncclResult_t ncclRedOpDestroy(ncclRedOp_t op, ncclComm_t comm) {
+ncclResult_t ncclRedOpDestroy_impl(ncclRedOp_t op, ncclComm_t comm) {
   if (0 <= int(op) && int(op) < int(ncclNumOps)) {
     WARN("ncclRedOpDestroy : operator is a NCCL builtin.");
     return ncclInvalidArgument;

@@ -17,7 +17,7 @@
 #include "nccl_net.h"
 #include "register.h"
 
-#if defined(__HIP_PLATFORM_AMD__) || defined(__HCC__) || defined(__HIPCC__)
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
 #define HIPRT_CB
 #else
 #if CUDART_VERSION < 9000
@@ -392,6 +392,13 @@ struct ncclComm {
   bool finalizeCalled;
   // shared structures for finalization
   int finalizeRankCnt;
+
+#if defined(ENABLE_MSCCLPP)
+  // Whether this comm is compatible with MSCCLPP
+  bool mscclppCompatible;
+  struct mscclppComm* mscclpp_comm;
+  size_t mscclpp_threshold;
+#endif
 
   // Whether this comm is compatible with MSCCL
   bool mscclCompatible;
