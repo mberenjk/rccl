@@ -25,6 +25,9 @@
 #include <cstring> // std::memcpy
 #include <cinttypes> // PRIx64
 
+#ifdef RCCL_INSERT_BARRIER
+  #include "insert_barrier.h"
+#endif
 struct ncclKernelMatch {
   void* kernelFn;
   bool specialized;
@@ -1418,6 +1421,8 @@ ncclResult_t ncclLaunchPrepare(struct ncclComm* comm) {
   return result;
 }
 
+
+
 ncclResult_t ncclLaunchKernelBefore_NoUncapturedCuda(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   // This code is called after we've checked in to the intra-process barrier
   // but before launching the kernel. We are not allowed to call CUDA unless the
@@ -1430,6 +1435,8 @@ ncclResult_t ncclLaunchKernelBefore_NoUncapturedCuda(struct ncclComm* comm, stru
 // NCCL uses the "Remote" Mem Sync domain by default
 NCCL_PARAM(MemSyncDomain, "MEM_SYNC_DOMAIN", cudaLaunchMemSyncDomainRemote);
 #endif
+RCCL_PARAM(rcclInsertBarrier, "RCCL_INSERT_BARRIER", 0);
+
 
 ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   struct ncclTasks* tasks = &comm->tasks;
@@ -1439,6 +1446,9 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   dim3 block = {(unsigned)plan->threadPerBlock, 1, 1};
   size_t smem = ncclShmemDynamicSize(comm->cudaArch);
   void *args[3] = {&comm->devComm, &plan->channelMask, &plan->workHead};
+  #ifdef RCCL_INSERT_BARRIER
+    CUDACHECK(hipExtLaunchKernel(rcclWaitForRanksKernel, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
+  #endif
   if (tasks->numStreams == 1 && !plan->persistent) {
     CUDACHECK(hipExtLaunchKernel(plan->kernelFn, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
     comm->lastStream = tasks->streams->stream;

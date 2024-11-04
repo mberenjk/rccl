@@ -383,6 +383,7 @@ set(SRC_FILES
 # src/clique/ShmObject.cc
 # src/clique/ShmObject.h
   src/device/all_gather.h
+  src/device/insert_barrier.h
   src/device/all_reduce.h
   src/device/alltoall_pivot.h
   src/device/broadcast.h
