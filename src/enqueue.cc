@@ -24,10 +24,10 @@
 #include <cassert>
 #include <cstring> // std::memcpy
 #include <cinttypes> // PRIx64
-
-#ifdef RCCL_INSERT_BARRIER
+#ifdef ENABLE_INSERT_BARRIER
   #include "insert_barrier.h"
 #endif
+
 struct ncclKernelMatch {
   void* kernelFn;
   bool specialized;
@@ -1435,8 +1435,6 @@ ncclResult_t ncclLaunchKernelBefore_NoUncapturedCuda(struct ncclComm* comm, stru
 // NCCL uses the "Remote" Mem Sync domain by default
 NCCL_PARAM(MemSyncDomain, "MEM_SYNC_DOMAIN", cudaLaunchMemSyncDomainRemote);
 #endif
-RCCL_PARAM(rcclInsertBarrier, "RCCL_INSERT_BARRIER", 0);
-
 
 ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   struct ncclTasks* tasks = &comm->tasks;
@@ -1446,8 +1444,17 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   dim3 block = {(unsigned)plan->threadPerBlock, 1, 1};
   size_t smem = ncclShmemDynamicSize(comm->cudaArch);
   void *args[3] = {&comm->devComm, &plan->channelMask, &plan->workHead};
-  #ifdef RCCL_INSERT_BARRIER
-    CUDACHECK(hipExtLaunchKernel(rcclWaitForRanksKernel, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
+  #ifdef ENABLE_INSERT_BARRIER
+    int dataSize = 1024;
+    int* d_data;
+    int* d_tempBuffer;
+    hipMalloc(&d_data, sizeof(int));
+    hipMalloc(&d_tempBuffer, sizeof(int));
+    int* data;
+    hipMemcpy(d_data, data, sizeof(int), hipMemcpyHostToDevice);
+    hipMemcpy(d_tempBuffer, data, sizeof(int), hipMemcpyHostToDevice);
+    void *temp_args[] = { &d_data, &dataSize, &comm->rank, &comm->nRanks, &d_tempBuffer};
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid, block, temp_args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
   #endif
   if (tasks->numStreams == 1 && !plan->persistent) {
     CUDACHECK(hipExtLaunchKernel(plan->kernelFn, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));

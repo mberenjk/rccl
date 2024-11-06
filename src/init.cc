@@ -109,6 +109,8 @@ static constexpr int64_t defaultEnableMscclpp = 0;
 #endif
 
 RCCL_PARAM(MscclppEnabled, "MSCCLPP_ENABLE", defaultEnableMscclpp);
+RCCL_PARAM(InsertBarrierEnabled, "INSERT_BARRIER_ENABLE", 1);
+
 
 // GDRCOPY support: Off by default
 NCCL_PARAM(GdrCopyEnable, "GDRCOPY_ENABLE", 0);

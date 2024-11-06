@@ -27,6 +27,7 @@ option(BUILD_TESTS                             "Build unit test programs"       
 option(COLLTRACE                               "Collective Trace Option"                       ON)
 option(ENABLE_MSCCL_KERNEL                     "Enable MSCCL while compiling"                  ON)
 option(ENABLE_MSCCLPP                          "Enable MSCCL++"                                ON)
+option(ENABLE_INSERT_BARRIER                   "Enable Insert Barrier"                         ON)
 option(ENABLE_IFC                              "Enable indirect function call"                 OFF)
 option(INSTALL_DEPENDENCIES                    "Force install dependencies"                    OFF)
 option(ROCTX                                   "Enable ROCTX"                                  OFF)
@@ -556,6 +557,13 @@ if (ENABLE_MSCCLPP)
   list(APPEND SRC_FILES ${MSCCLPP_SOURCES})
 endif()
 
+if(ENABLE_INSERT_BARRIER)
+  set(INSERT_BARRIER_SOURCE
+    src/device/insert_barrier.h
+  )
+  list(APPEND SRC_FILES ${INSERT_BARRIER_SOURCE})
+endif()
+
 # Hipify source files (copy of source generated into hipify directory)
 #==================================================================================================
 find_program(hipify-perl_executable hipify-perl)
@@ -661,6 +669,9 @@ if(ENABLE_MSCCL_KERNEL)
 endif()
 if(ENABLE_MSCCLPP)
   target_compile_definitions(rccl PRIVATE ENABLE_MSCCLPP)
+endif()
+if(ENABLE_INSERT_BARRIER)
+  target_compile_definitions(rccl PRIVATE ENABLE_INSERT_BARRIER)
 endif()
 if(HAVE_ROCM_SMI64CONFIG)
   target_compile_definitions(rccl PRIVATE USE_ROCM_SMI64CONFIG)

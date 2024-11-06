@@ -25,7 +25,7 @@ install_library=false
 install_prefix="${ROCM_PATH}"
 msccl_kernel_enabled=true
 mscclpp_enabled=true
-insert_barrier=false
+insert_barrier_enabled=true
 num_parallel_jobs=$(nproc)
 npkit_enabled=false
 openmp_test_enabled=false
@@ -98,7 +98,7 @@ while true; do
          --disable-colltrace)        collective_trace=false;                                                                           shift ;;
          --disable-msccl-kernel)     msccl_kernel_enabled=false;                                                                       shift ;;
          --disable-mscclpp)          mscclpp_enabled=false;                                                                            shift ;;
-         --insert-barrier)           insert-barrier=false;                                                                             shift ;;
+         --insert-barrier)           insert_barrier_enabled=false;                                                                             shift ;;
     -f | --fast)                     build_local_gpu_only=true; collective_trace=false; msccl_kernel_enabled=false;                    shift ;;
     -h | --help)                     display_help;                                                                                     exit 0 ;;
     -i | --install)                  install_library=true;                                                                             shift ;;
@@ -243,8 +243,8 @@ if [[ "${mscclpp_enabled}" == false ]]; then
     cmake_common_options="${cmake_common_options} -DENABLE_MSCCLPP=OFF"
 fi
 
-if [[ "${insert-barrier}" == false ]]; then
-    cmake_common_options="${cmake_common_options} -DINSERT_BARRIER=OFF"
+if [[ "${insert_barrier_enabled}" == false ]]; then
+    cmake_common_options="${cmake_common_options} -DENABLE_INSERT_BARRIER=OFF"
 fi
 
 # Install dependencies
