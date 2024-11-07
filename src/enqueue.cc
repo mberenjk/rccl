@@ -24,6 +24,9 @@
 #include <cassert>
 #include <cstring> // std::memcpy
 #include <cinttypes> // PRIx64
+//#ifdef ENABLE_INSERT_BARRIER
+#include "insert_barrier.h"
+//#endif
 
 struct ncclKernelMatch {
   void* kernelFn;
@@ -1418,6 +1421,8 @@ ncclResult_t ncclLaunchPrepare(struct ncclComm* comm) {
   return result;
 }
 
+
+
 ncclResult_t ncclLaunchKernelBefore_NoUncapturedCuda(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   // This code is called after we've checked in to the intra-process barrier
   // but before launching the kernel. We are not allowed to call CUDA unless the
@@ -1430,6 +1435,7 @@ ncclResult_t ncclLaunchKernelBefore_NoUncapturedCuda(struct ncclComm* comm, stru
 // NCCL uses the "Remote" Mem Sync domain by default
 NCCL_PARAM(MemSyncDomain, "MEM_SYNC_DOMAIN", cudaLaunchMemSyncDomainRemote);
 #endif
+RCCL_PARAM(InsertBarrier, "INSERT_BARRIER", -1);
 
 ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   struct ncclTasks* tasks = &comm->tasks;
@@ -1439,6 +1445,42 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   dim3 block = {(unsigned)plan->threadPerBlock, 1, 1};
   size_t smem = ncclShmemDynamicSize(comm->cudaArch);
   void *args[3] = {&comm->devComm, &plan->channelMask, &plan->workHead};
+  //#ifdef ENABLE_INSERT_BARRIER
+  if(rcclParamInsertBarrier() == 1){
+    bool method1 = false;
+  if(method1){
+    uint8_t *flagBuffer;
+    kernelParam kp;
+    hipIpcMemHandle_t *flagHandle = NULL;
+    ncclResult_t ret = ncclSuccess;
+    hipExtMallocWithFlags((void**)&flagBuffer, comm->nRanks*sizeof(uint8_t), hipDeviceMallocUncached);
+    flagHandle = (hipIpcMemHandle_t *) malloc(comm->nRanks * sizeof(hipIpcMemHandle_t));
+    CUDACHECK(hipIpcGetMemHandle(flagHandle, (void*)flagBuffer));
+    printf("comm->rank = %d \n", comm->nRanks);
+    
+    NCCLCHECK(bootstrapAllGather(comm->bootstrap, flagHandle, sizeof(hipIpcMemHandle_t)));
+    int j = 0;
+    for (int i = 0; i < comm->nRanks; i++) {
+	    if (i != comm->rank) {
+        CUDACHECK(hipIpcOpenMemHandle(&(kp.ptrs_flag[j++]), flagHandle[i], hipIpcMemLazyEnablePeerAccess));	
+      }
+    }
+    void *temp_args[] = { flagBuffer, &comm->rank, &comm->nRanks};
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
+  }
+  else{
+    // we are using nccl send/rcv primitives inside the kernel
+    uint8_t *sendBuffer, *recvBuffer;
+    hipExtMallocWithFlags((void**)&sendBuffer, comm->nRanks*sizeof(uint8_t), hipDeviceMallocUncached);
+    hipExtMallocWithFlags((void**)&recvBuffer, comm->nRanks*sizeof(uint8_t), hipDeviceMallocUncached);
+    
+    void *temp_args[] = { args, &comm->rank, &comm->nRanks, sendBuffer, recvBuffer};
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier2, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
+
+
+  }
+  }
+  //#endif
   if (tasks->numStreams == 1 && !plan->persistent) {
     CUDACHECK(hipExtLaunchKernel(plan->kernelFn, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
     comm->lastStream = tasks->streams->stream;

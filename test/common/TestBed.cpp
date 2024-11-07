@@ -6,6 +6,10 @@
 #include <unistd.h>
 #include "TestBed.hpp"
 #include <rccl/rccl.h>
+//#ifdef ENABLE_INSERT_BARRIER
+  #include <chrono>
+  #include <random>
+//#endif
 
 #define PIPE_WRITE(childId, val)                                        \
   ASSERT_EQ(write(childList[childId]->parentWriteFd, &val, sizeof(val)), sizeof(val))
@@ -314,6 +318,14 @@ namespace RcclUnitTesting
                                    bool const useHipGraph)
   {
     InteractiveWait("Starting ExecuteCollectives");
+    //#ifdef ENABLE_INSERT_BARRIER
+      std::random_device rd;
+      std::mt19937 gen(rd());
+      std::uniform_int_distribution<> delay_dist(10, 500);
+      int random_delay = delay_dist(gen);
+      printf("Applying random delay of = %d ms before kernel launch. \n" , random_delay);
+      std::this_thread::sleep_for(std::chrono::milliseconds(random_delay));
+    //#endif
 
     int const cmd = TestBedChild::CHILD_EXECUTE_COLL;
     ++TestBed::NumTestsRun();
