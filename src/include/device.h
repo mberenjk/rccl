@@ -451,6 +451,8 @@ struct ncclDevComm {
   pthread_t collTraceThread;
 #endif
 
+
+
 #ifdef ENABLE_PROFILING
   struct ncclProf* devProf;
 #endif

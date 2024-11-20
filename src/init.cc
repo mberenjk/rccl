@@ -524,6 +524,7 @@ ncclResult_t ncclCommEnsureReady(ncclComm_t comm) {
 exit:
   return ret;
 }
+//RCCL_PARAM(InsertBarrier, "INSERT_BARRIER", -1);
 
 static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, int ndev, int rank) {
   if (ndev < 1) {
@@ -584,6 +585,27 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
   else
     comm->collTraceThread = 0;
 #endif
+
+  //if(rcclParamInsertBarrier() == 1) {
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, comm->nRanks));
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, comm->nRanks));
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierWorkElem, sizeof(ncclWorkElem)));
+    
+    comm->barrierWorkElem->sendbuff = comm->barrierSendBuffer;
+    comm->barrierWorkElem->recvbuff = comm->barrierRecvBuffer;
+    comm->barrierWorkElem->regUsed = 0;
+    comm->barrierWorkElem->nWarps = 4;
+    comm->barrierWorkElem->flagBits = 5;
+    comm->barrierWorkElem->chunkCount = 16384;
+    comm->barrierWorkElem->workCount = 1;
+    comm->barrierWorkElem->workOffset = 0;
+    comm->barrierWorkElem->nChannels = 1;
+    comm->barrierWorkElem->bid = 0;
+    comm->barrierWorkElem->pivotA2ANumBiRings = 0;
+   
+  //}
+
+
   comm->collNetSupport = 0;
   memset(comm->collNetSupportMatrix, 0, sizeof(comm->collNetSupportMatrix));
 

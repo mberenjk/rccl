@@ -58,6 +58,10 @@ namespace {
           ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
     }
 #endif
+    
+    //printf("nthreads = %d  ring->prev = %d ring->next = %d \n", nthreads, ring->prev, ring->next);
+    //printf("nChannels = %d, bid = %d, pivotA2ANumBiRings = %d, count = %d flagBits = %d regUsed = %d nwarps = %d direct = %d, nwarps = %d, chunckCount = %d workoffset = %d workCount =%d \n", args->nChannels, args->bid, args->pivotA2ANumBiRings, args->count, args->flagBits, args->regUsed, args->nWarps, args->direct, args->nWarps, args->chunkCount, args->workOffset, args->workCount );
+
 
     Primitives<T, RedOp, FanSymmetric<1>, 0, Proto, 0> prims
       (tid, nthreads, &ring->prev, &ring->next, args->sendbuff, args->recvbuff, args->redOpArg, 0, args->connIndex, args->connIndex);

@@ -420,6 +420,12 @@ struct ncclComm {
   size_t mscclpp_threshold;
 #endif
 
+//#ifdef ENABLE_BARRIER
+  uint8_t* barrierSendBuffer;
+  uint8_t* barrierRecvBuffer;
+  ncclWorkElem* barrierWorkElem;
+//#endif
+
   // Whether this comm is compatible with MSCCL
   bool mscclCompatible;
   // group job to support multi-thread FT
