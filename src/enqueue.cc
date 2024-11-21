@@ -1434,8 +1434,7 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
 
   if(rcclParamInsertBarrier() == 1) {  
     
-    void *temp_args[] = { &comm->barrierWorkElem, comm->barrierSendBuffer, comm->barrierRecvBuffer, &comm->rank, &comm->nRanks, &comm->devComm};
-    printf("rcclWaitForAllRanksBarrier \n");
+    void *temp_args[] = {&comm->devComm, &plan->channelMask, &plan->workHead, &comm->barrierWorkElem, comm->barrierSendBuffer, comm->barrierRecvBuffer, &comm->rank, &comm->nRanks, &comm->devComm};
     CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid, block, temp_args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
   }
   if (tasks->numStreams == 1 && !plan->persistent) {
