@@ -119,7 +119,6 @@ namespace {
     const size_t gridOffset = args->workOffset;
     size_t offset;
     int nelem;
-   
     Primitives<uint8_t, FuncSum<uint8_t>, FanSymmetric<1>, 0, ProtoLL, 0>
       prims(tid, nthreads, &ring->prev, &ring->next, args->sendbuff, args->recvbuff, 0, 0, 0, 0);
 

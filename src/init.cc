@@ -585,7 +585,6 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
   else
     comm->collTraceThread = 0;
 #endif
-
   //if(rcclParamInsertBarrier() == 1) {
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, comm->nRanks));
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, comm->nRanks));
