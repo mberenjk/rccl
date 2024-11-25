@@ -350,6 +350,7 @@ static ncclResult_t groupLaunch(struct ncclAsyncJob *job_) {
 
     if (ret != ncclSuccess) goto fail;
   }
+
   if (groupCommHeadMain != nullptr) {
     NCCLCHECKGOTO(doLaunches(groupCommHeadMain), ret, fail);
   }

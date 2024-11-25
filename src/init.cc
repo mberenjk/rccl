@@ -589,7 +589,7 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, comm->nRanks));
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, comm->nRanks));
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierWorkElem, sizeof(ncclWorkElem)));
-    
+
     comm->barrierWorkElem->sendbuff = comm->barrierSendBuffer;
     comm->barrierWorkElem->recvbuff = comm->barrierRecvBuffer;
     comm->barrierWorkElem->regUsed = 0;
@@ -601,7 +601,7 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
     comm->barrierWorkElem->nChannels = 1;
     comm->barrierWorkElem->bid = 0;
     comm->barrierWorkElem->pivotA2ANumBiRings = 0;
-   
+
   //}
 
 

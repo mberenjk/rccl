@@ -104,14 +104,14 @@ namespace {
 #if defined(USE_INDIRECT_FUNCTION_CALL) && !defined(__gfx940__) && !defined(__gfx941__) && !defined(__gfx942__)
   __device__ void runRing(ncclWorkElem *args) {
 #else
-  __device__ __attribute__((noinline)) void runRing(ncclWorkElem *args, uint8_t* sendBuffer, uint8_t* recvBuffer, int rank2, int nranks2, ncclDevComm* devComm) {
+  __device__ __attribute__((noinline)) void runRing(ncclWorkElem *args, uint8_t* sendBuffer, uint8_t* recvBuffer, ncclDevComm* devComm) {
 #endif
     const int tid = threadIdx.x;
     const int nthreads = args->nWarps * WARP_SIZE;
     ncclRing *ring = &ncclShmem.channel.ring;
     const int nranks = ncclShmem.comm.nRanks;
     const int rank = ncclShmem.comm.rank;
-    
+
     const int prevRank = ring->userRanks[nranks-1];
     const int root = args->root;
     const size_t chunkCount = args->chunkCount;
@@ -150,9 +150,8 @@ template<typename T>
  __device__ __attribute__((noinline)) void runRing2(ncclWorkElem *args) {
  }
 
-__global__ __forceinline__ void rcclWaitForAllRanksBarrier(struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclWork* workHead, ncclWorkElem *args, uint8_t* sendBuffer, uint8_t* recvBuffer, int rank, int nranks, ncclDevComm* devComm)
+__global__ __forceinline__ void rcclWaitForAllRanksBarrier(struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclWork* workHead, ncclWorkElem *args, uint8_t* sendBuffer, uint8_t* recvBuffer, ncclDevComm* devComm)
 {
-  //runRing2<uint8_t>(args);
   copyShmemData(comm, channelMask, workHead);
-  runRing(args, sendBuffer, recvBuffer, rank, nranks, devComm);
+  runRing(args, sendBuffer, recvBuffer, devComm);
 }
