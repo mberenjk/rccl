@@ -202,6 +202,8 @@ namespace RcclUnitTesting
     getArchInfo(&isGfx94, "gfx94");
     isGfx12 = false;
     getArchInfo(&isGfx12, "gfx12");
+    isGfx90 = false;
+    getArchInfo(&isGfx90, "gfx90");
 
     showNames      = GetEnvVar("UT_SHOW_NAMES"  , 1);
     minGpus        = GetEnvVar("UT_MIN_GPUS"    , 1);
