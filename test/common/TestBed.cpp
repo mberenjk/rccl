@@ -415,6 +415,7 @@ namespace RcclUnitTesting
         // Send LaunchGraphs command to each active child process
         PIPE_WRITE(childId, cmd);
         PIPE_WRITE(childId, currGroup);
+        PIPE_WRITE(childId, ev.timeoutUs);
 
         // Wait for child acknowledgement
         PIPE_CHECK(childId);

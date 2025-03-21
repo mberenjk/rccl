@@ -850,6 +850,8 @@ namespace RcclUnitTesting
   ErrCode TestBedChild::LaunchGraphs()
   {
     int groupId;
+    int timeoutUs = 0;
+
     PIPE_READ(groupId);
 
     if (this->verbose) INFO("Child %d begins LaunchGraphs for group %d\n", this->childId, groupId);
@@ -863,6 +865,32 @@ namespace RcclUnitTesting
         CHECK_HIP(hipGraphLaunch(this->graphExecs[groupId][localRank][streamIdx], this->streams[groupId][localRank][streamIdx]));
       }
     }
+    PIPE_READ(timeoutUs);
+
+     // Synchronize
+     std::vector<hipStream_t> streamsToComplete;
+     for (int localRank = 0; localRank < this->deviceIds.size(); ++localRank)
+     {
+       for (int i = 0; i < this->numStreamsPerGroup[groupId]; i++)
+         streamsToComplete.push_back(this->streams[groupId][localRank][i]);
+     }
+     int usElapsed = 0, timedout = 0;
+     using namespace std::chrono;
+     using Clock = std::chrono::high_resolution_clock;
+     if (this->verbose) INFO("Starting sychronization and timing\n");
+     const auto start = Clock::now();
+     while (!streamsToComplete.empty() && usElapsed < timeoutUs)
+     {
+       for (int i = 0; i < streamsToComplete.size(); i++)
+       {
+         if (hipStreamQuery(streamsToComplete[i]) == hipSuccess)
+         {
+           streamsToComplete.erase(streamsToComplete.begin() + i);
+           i--;
+         }
+       }
+       usElapsed = duration_cast<microseconds>(Clock::now() - start).count();
+     }
 
     if (this->verbose) INFO("Child %d finishes LaunchGraphs for group %d\n", this->childId, groupId);
     return TEST_SUCCESS;
