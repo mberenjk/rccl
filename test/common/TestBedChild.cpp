@@ -851,6 +851,7 @@ namespace RcclUnitTesting
   {
     int groupId;
     int timeoutUs = 0;
+    std::vector<hipStream_t> streamsToComplete;
 
     PIPE_READ(groupId);
 
@@ -863,17 +864,12 @@ namespace RcclUnitTesting
       {
         if (this->verbose) INFO("Launch graph for group %d rank %d stream %d\n", groupId, localRank, streamIdx);
         CHECK_HIP(hipGraphLaunch(this->graphExecs[groupId][localRank][streamIdx], this->streams[groupId][localRank][streamIdx]));
+        streamsToComplete.push_back(this->streams[groupId][localRank][streamIdx]);
       }
     }
     PIPE_READ(timeoutUs);
 
      // Synchronize
-     std::vector<hipStream_t> streamsToComplete;
-     for (int localRank = 0; localRank < this->deviceIds.size(); ++localRank)
-     {
-       for (int i = 0; i < this->numStreamsPerGroup[groupId]; i++)
-         streamsToComplete.push_back(this->streams[groupId][localRank][i]);
-     }
      int usElapsed = 0, timedout = 0;
      using namespace std::chrono;
      using Clock = std::chrono::high_resolution_clock;
@@ -891,6 +887,23 @@ namespace RcclUnitTesting
        }
        usElapsed = duration_cast<microseconds>(Clock::now() - start).count();
      }
+
+    // timed out
+    if (!streamsToComplete.empty())
+    {
+      if (this->verbose) INFO("Collective timed out, aborting\n");
+      for (int localRank = 0; localRank < this->deviceIds.size(); ++localRank)
+      {
+        ncclCommAbort(this->comms[localRank]);
+        timedout = 1;
+      }
+    }
+
+    if (timedout)
+    {
+      ERROR("Child %d timed out and exceeded limit %d us in ExecuteCollectives()\n", this->childId, timeoutUs);
+      return TEST_TIMEOUT;
+    }
 
     if (this->verbose) INFO("Child %d finishes LaunchGraphs for group %d\n", this->childId, groupId);
     return TEST_SUCCESS;
