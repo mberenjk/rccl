@@ -37,7 +37,7 @@
 // to GPU traffic consumes more PCI bandwidth.
 #define INTEL_P2P_OVERHEAD(bw) (bw*6/5)
 
-#define NCCL_TOPO_NODE_TYPES 7
+#define NCCL_TOPO_NODE_TYPES 6
 #define GPU 0
 #define PCI 1
 #define NVS 2
@@ -111,9 +111,10 @@ struct ncclTopoLinkList {
 
 #define NCCL_TOPO_UNDEF (-1)
 
+#define NCCL_TOPO_ID_LOCAL_ID_MASK 0x00ffffffffffffff
 #define NCCL_TOPO_ID_SYSTEM_ID(id) (id >> 56)
-#define NCCL_TOPO_ID_LOCAL_ID(id) (id & 0x00ffffffffffffff)
-#define NCCL_TOPO_ID(systemid, localid) (((int64_t)systemid << 56) + localid)
+#define NCCL_TOPO_ID_LOCAL_ID(id) (id & NCCL_TOPO_ID_LOCAL_ID_MASK)
+#define NCCL_TOPO_ID(systemid, localid) (((int64_t)systemid << 56) + (localid & NCCL_TOPO_ID_LOCAL_ID_MASK))
 
 #define RCCL_TOPO_CR8G      1
 #define RCCL_TOPO_4P2H_ROME 2
@@ -121,6 +122,13 @@ struct ncclTopoLinkList {
 #define RCCL_TOPO_16P1H     8
 #define RCCL_TOPO_FORCE_INTRA 16
 #define RCCL_TOPO_XGMI_ALL  32
+
+#define RCCL_LL_TUNABLE_COLLS 4 // LL/LL64/LL128 tunable Collectives
+#define RCCL_RS_TUNABLE 0       // reduce_scatter index
+#define RCCL_AG_TUNABLE 1       // all_gather index
+#define RCCL_AR_TUNABLE 2       // all_reduce index
+#define RCCL_RE_TUNABLE 3       // reduce index
+#define RCCL_LL_LIMITS_UNDEFINED 0
 
 #define GCN_ARCH_NAME_LEN 16
 
@@ -262,7 +270,7 @@ static ncclResult_t ncclTopoIdToNetDev(struct ncclTopoSystem* system, int64_t id
 static float ncclTopoXGMISpeed(const char* gcn) {
   if (IsArchMatch(gcn, "gfx90a"))
     return MI200_XGMI_WIDTH;
-  else if (IsArchMatch(gcn, "gfx94"))
+  else if (IsArchMatch(gcn, "gfx942"))
     return GFX94X_XGMI_WIDTH;
   else if (IsArchMatch(gcn, "gfx95"))
     return GFX95X_XGMI_WIDTH;

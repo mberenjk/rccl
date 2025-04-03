@@ -19,7 +19,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
   template<typename Proto>
   __device__ void runSend(int tid, int tn, int group, struct ncclDevWorkP2p* work) {
     size_t bytes = work->sendBytes;
-    int chunkSize = u32fp8Decode(work->sendChunkSize_u32fp8);
+    int chunkSize = work->sendIpcReg && ncclShmem.comm.isNvlink ? (1 << 30) : u32fp8Decode(work->sendChunkSize_u32fp8);
   
 #if defined(ENABLE_NPKIT)
     bool isNpKitThread = (tid == 0);
@@ -43,7 +43,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
     Primitives<T, RedOp, FanAsymmetric<0, 1>, 0, Proto, 1>
       prims(tid, tn, nullptr, &work->sendRank, work->sendAddr, nullptr,
             /*redOpArg(ignored)=*/0, group, work->sendConnIndex, work->sendConnIndex, nullptr,
-            /*userBufferMode=*/work->sendRegistered, ncclShmem.comm.p2pChunkSize);
+            /*ipcReg=*/work->sendIpcReg, /*netReg=*/work->sendRegistered, ncclShmem.comm.p2pChunkSize);
 
 #if defined(ENABLE_NPKIT)
       if (isNpKitThread) {
@@ -77,7 +77,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
   template<typename Proto>
   __device__ void runRecv(int tid, int tn, int group, struct ncclDevWorkP2p* work) {
     size_t bytes = work->recvBytes;
-    int chunkSize = u32fp8Decode(work->recvChunkSize_u32fp8);
+    int chunkSize = work->recvIpcReg && ncclShmem.comm.isNvlink ? (1 << 30) : u32fp8Decode(work->recvChunkSize_u32fp8);
 
 #if defined(ENABLE_NPKIT)
     bool isNpKitThread = (tid == 0);
@@ -101,7 +101,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
     Primitives<T, RedOp, FanAsymmetric<1, 0>, 0, Proto, 1>
       prims(tid, tn, &work->recvRank, nullptr, nullptr, work->recvAddr,
             /*redOpArg(ignored)=*/0, group, work->recvConnIndex, work->recvConnIndex, nullptr,
-            /*userBufferMode=*/work->recvRegistered, ncclShmem.comm.p2pChunkSize);
+            /*ipcReg=*/work->recvIpcReg, /*netReg=*/work->recvRegistered, ncclShmem.comm.p2pChunkSize);
 
 #if defined(ENABLE_NPKIT)
       if (isNpKitThread) {
@@ -120,7 +120,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
     size_t cursor = 0;
     do {
       int n = min(size_t(chunkSize), bytes-cursor);
-      prims.directRecv(cursor, n);
+      prims.directRecv(cursor, cursor, n);
       cursor += n;
     } while (cursor < bytes && work->recvRegistered == 0);
 
@@ -132,7 +132,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
 #endif
   }
 
-#if defined(USE_INDIRECT_FUNCTION_CALL) && !defined(__gfx940__) && !defined(__gfx941__) && !defined(__gfx942__) && !defined(__gfx950__)
+#if defined(USE_INDIRECT_FUNCTION_CALL) && !defined(__gfx942__) && !defined(__gfx950__)
   __device__  void run() {
 #else
   __device__  __attribute__((noinline)) void run() {
@@ -172,6 +172,9 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
           (isSend ? work->sendBytes : work->recvBytes) = partEnd - partBeg;
         }
       }
+      // Coverity reports a possible thread divergence due to not all threads participating in the collective.
+      // However, the code ensures that the participation is on a per-warp basis.
+      // coverity[device_thread_diverged:FALSE]
       uint32_t mask = __ballot(hasWork);
       if (lane == 0) {
         shared->workSendMask = mask>>16;
@@ -241,7 +244,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
     }
 
     if (isCopy) {
-#if defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__) || defined(__gfx950__)
+#if defined(__gfx942__) || defined(__gfx950__)
       reduceCopy<COLL_UNROLL*2, RedOp, T, 0,1,1, 0,1,1, /*PreOpSrcs=*/0>
         (subtid, subtn, 0, nullptr, false, 1, &work->sendAddr, 1, &work->recvAddr, (ssize_t)work->sendBytes);
 #else
@@ -254,7 +257,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
       } else {
 #if defined(__gfx90a__)
         runSend<ProtoSimple<1,1,8>>(subtid, subtn, group, work);
-#elif defined(__gfx908__) || defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__) || defined(__gfx950__)
+#elif defined(__gfx908__) || defined(__gfx942__) || defined(__gfx950__)
         runSend<ProtoSimple<1,1,4>>(subtid, subtn, group, work);
 #else
         runSend<ProtoSimple<1,1>>(subtid, subtn, group, work);
@@ -266,7 +269,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
       } else {
 #if defined(__gfx90a__)
         runRecv<ProtoSimple<1,1,8>>(subtid, subtn, group, work);
-#elif defined(__gfx908__) || defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__) || defined(__gfx950__)
+#elif defined(__gfx908__) || defined(__gfx942__) || defined(__gfx950__)
         runRecv<ProtoSimple<1,1,4>>(subtid, subtn, group, work);
 #else
         runRecv<ProtoSimple<1,1>>(subtid, subtn, group, work);

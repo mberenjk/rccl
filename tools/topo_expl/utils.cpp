@@ -38,7 +38,6 @@ const char* ncclProtoStr[NCCL_NUM_PROTOCOLS] = { "LL", "LL128", "Simple" };
 
 extern NodeModel *node_model;
 
-RCCL_PARAM(CliqueIgnoreTopo, "CLIQUE_IGNORE_TOPO", 0);
 RCCL_PARAM(P2pNetDisable, "P2P_NET_DISABLE", 0);
 RCCL_PARAM(PivotAlltoallEnable, "PIVOT_ALLTOALL_ENABLE", 1);
 RCCL_PARAM(LL128ForceEnable, "LL128_FORCE_ENABLE", 0);
@@ -354,7 +353,7 @@ static ncclResult_t selectTransport(struct ncclComm* comm, struct ncclTopoGraph*
     struct ncclTransport *transport = ncclTransports[t];
     struct ncclTransportComm* transportComm = type == 1 ? &transport->send : &transport->recv;
     int ret = 0;
-    NCCLCHECK(transport->canConnect(&ret, comm->topo, graph, myInfo, peerInfo));
+    NCCLCHECK(transport->canConnect(&ret, comm, graph, myInfo, peerInfo));
     if (ret) {
       connector->transportComm = transportComm;
       NCCLCHECK(transportComm->setup(comm, graph, myInfo, peerInfo, connect, connector, channelId, connIndex));
@@ -722,7 +721,7 @@ ncclResult_t initTransportsRank_1(struct ncclComm* comm, struct allGatherInfo *a
   //struct ncclTopoGraph treeGraph;
   //struct ncclTopoGraph collNetGraph;
   //struct ncclTopoGraph nvlsGraph;
-  struct ncclTopoGraph* graphs[] = { &treeGraph, &ringGraph, &collNetGraph, &collNetGraph, &nvlsGraph, &nvlsGraph };
+  struct ncclTopoGraph* graphs[] = { &treeGraph, &ringGraph, &collNetGraph, &collNetGraph, &nvlsGraph, &nvlsGraph, &nvlsGraph};
 
   int nChannelsOrig;
   struct ncclTopoRanks** allTopoRanks = NULL;
@@ -964,6 +963,7 @@ ncclResult_t initTransportsRank_1(struct ncclComm* comm, struct allGatherInfo *a
   }
 
   comm->nChannels = std::min(treeGraph.nChannels, ringGraph.nChannels);
+  TRACE(NCCL_INIT,"treeGraph.nChannels: %d , ringGraph.nChannels: %d", treeGraph.nChannels, ringGraph.nChannels);
   NCCLCHECKGOTO(ncclTopoPreset(comm, graphs, &allGather3Data[rank].topoRanks), ret, fail);
 fail:
   return ret;
@@ -976,7 +976,7 @@ ncclResult_t initTransportsRank_3(struct ncclComm* comm, struct allGatherInfo *a
   int nranks = comm->nRanks;
   cpu_set_t affinitySave;
 
-  struct ncclTopoGraph* graphs[] = { &treeGraph, &ringGraph, &collNetGraph, &collNetGraph, &nvlsGraph, &nvlsGraph };
+  struct ncclTopoGraph* graphs[] = { &treeGraph, &ringGraph, &collNetGraph, &collNetGraph, &nvlsGraph, &nvlsGraph, &nvlsGraph};
 
   int nChannelsOrig;
   struct ncclTopoRanks** allTopoRanks = NULL;
@@ -1091,6 +1091,7 @@ ncclResult_t initTransportsRank_3(struct ncclComm* comm, struct allGatherInfo *a
   }
 
   NCCLCHECKGOTO(ncclCalloc(&rings, nranks*MAXCHANNELS), ret, fail);
+  TRACE(NCCL_INIT, "rank %d nranks %d nchannels %d", rank, nranks, comm->nChannels);
 
   NCCLCHECKGOTO(ncclTopoPostset(comm, nodesFirstRank, nodesTreePatterns, allTopoRanks, rings, graphs, NULL, nc), ret, fail);
   if (comm->topo->treeDefined) NCCLCHECK(ncclTreeBasePostset(comm, &treeGraph));

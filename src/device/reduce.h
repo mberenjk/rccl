@@ -11,7 +11,7 @@
 
 namespace {
   template<typename T, typename RedOp, typename Proto>
-#if defined(USE_INDIRECT_FUNCTION_CALL) && !defined(__gfx940__) && !defined(__gfx941__) && !defined(__gfx942__) && !defined(__gfx950__)
+#if defined(USE_INDIRECT_FUNCTION_CALL) && !defined(__gfx942__) && !defined(__gfx950__)
   __device__ void runRing(int tid, int nthreads, struct ncclDevWorkColl* work) {
 #else
   __device__ __attribute__((noinline)) void runRing(int tid, int nthreads, struct ncclDevWorkColl* work) {
@@ -28,6 +28,9 @@ namespace {
     size_t offset;
     int nelem;
 
+    // Coverity reports that the callee treats &ring->next as an array.  However, due to the use of
+    // FanSymmetric<1>, only the first element is ever accessed, so it's fine.
+    // coverity[callee_ptr_arith:FALSE]
     Primitives<T, RedOp, FanSymmetric<1>, 0, Proto, 0>
       prims(tid, nthreads, &ring->prev, &ring->next, work->sendbuff, work->recvbuff, work->redOpArg, 0, work->connIndex, work->connIndex);
 

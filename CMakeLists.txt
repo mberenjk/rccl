@@ -33,6 +33,7 @@ option(ROCTX                                   "Enable ROCTX"                   
 option(PROFILE                                 "Enable profiling"                              OFF)
 option(TIMETRACE                               "Enable time-trace during compilation"          OFF)
 option(TRACE                                   "Enable additional tracing"                     OFF)
+option(FAULT_INJECTION                         "Enable fault injection"                        ON)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -423,22 +424,6 @@ set(SRC_FILES
   src/proxy.cc
   src/register.cc
   src/transport.cc
-# src/clique/AllReduceCliqueKernel.h
-# src/clique/CliqueCommon.h
-# src/clique/CliqueManager.cc
-# src/clique/CliqueManager.h
-# src/clique/CliqueShmNames.h
-# src/clique/HandleCache.cc
-# src/clique/HandleCache.h
-# src/clique/HandleShm.cc
-# src/clique/HandleShm.h
-# src/clique/Hash.cc
-# src/clique/Hash.h
-# src/clique/MsgQueue.cc
-# src/clique/MsgQueue.h
-# src/clique/SharedMemHelper.h
-# src/clique/ShmObject.cc
-# src/clique/ShmObject.h
   src/device/all_gather.h
   src/device/all_reduce.h
   src/device/alltoall_pivot.h
@@ -502,6 +487,7 @@ set(SRC_FILES
   src/include/ipcsocket.h
   src/include/nccl_common.h
   src/include/nccl_net.h
+  src/include/nccl_profiler.h
   src/include/nccl_tuner.h
   src/include/net_device.h
   src/include/net.h
@@ -519,6 +505,7 @@ set(SRC_FILES
   src/include/rocmwrap.h
   src/include/roctx.h
   src/include/shm.h
+  src/include/shmutils.h
   src/include/signals.h
   src/include/socket.h
   src/include/strongstream.h
@@ -651,14 +638,26 @@ foreach(SRC_FILE ${SRC_FILES})
   list(APPEND HIP_SOURCES ${HIP_FILE})
 
   # Create a custom command to create hipified source code
-  add_custom_command(
-    OUTPUT ${HIP_FILE}
-    COMMAND mkdir -p ${HIP_FILE_DIR}
-            && ${hipify-perl_executable} -quiet-warnings ${CMAKE_SOURCE_DIR}/${SRC_FILE} -o ${HIP_FILE}
-            && ${CMAKE_COMMAND} -E env bash ${CMAKE_CURRENT_SOURCE_DIR}/cmake/scripts/add_unroll.sh ${HIP_FILE}
-    MAIN_DEPENDENCY ${SRC_FILE}
-    COMMENT "Hipifying ${SRC_FILE} -> ${HIP_FILE}"
-  )
+  if (FAULT_INJECTION)
+    add_custom_command(
+      OUTPUT ${HIP_FILE}
+      COMMAND mkdir -p ${HIP_FILE_DIR}
+              && ${hipify-perl_executable} -quiet-warnings ${CMAKE_SOURCE_DIR}/${SRC_FILE} -o ${HIP_FILE}
+              && ${CMAKE_COMMAND} -E env bash ${CMAKE_CURRENT_SOURCE_DIR}/cmake/scripts/add_unroll.sh ${HIP_FILE}
+              && ${CMAKE_COMMAND} -E env bash ${CMAKE_CURRENT_SOURCE_DIR}/cmake/scripts/add_faults.sh ${HIP_FILE}
+      MAIN_DEPENDENCY ${SRC_FILE}
+      COMMENT "Hipifying ${SRC_FILE} -> ${HIP_FILE}"
+    )
+  else()
+    add_custom_command(
+      OUTPUT ${HIP_FILE}
+      COMMAND mkdir -p ${HIP_FILE_DIR}
+              && ${hipify-perl_executable} -quiet-warnings ${CMAKE_SOURCE_DIR}/${SRC_FILE} -o ${HIP_FILE}
+              && ${CMAKE_COMMAND} -E env bash ${CMAKE_CURRENT_SOURCE_DIR}/cmake/scripts/add_unroll.sh ${HIP_FILE}
+      MAIN_DEPENDENCY ${SRC_FILE}
+      COMMENT "Hipifying ${SRC_FILE} -> ${HIP_FILE}"
+    )
+  endif()
 endforeach()
 
 # Generate device/host tables and all the collective functions that are going to be in librccl.so
@@ -821,6 +820,10 @@ endif()
 if(TIMETRACE)
   target_compile_options(rccl PRIVATE -ftime-trace)
 endif()
+if (FAULT_INJECTION)
+  target_compile_definitions(rccl PRIVATE ENABLE_FAULT_INJECTION)
+  message(STATUS "Fault injection enabled")
+endif()
 
 ## Set RCCL linked library directories
 target_link_directories(rccl PRIVATE ${ROCM_SMI_LIB_DIR})
@@ -871,7 +874,7 @@ else()
   execute_process(
     COMMAND bash "-c" "free | grep -o '[[:digit:]]*' | head -1"
     OUTPUT_VARIABLE memory_max_string)
-  ## memory_max_string holds the free memory in KB  
+  ## memory_max_string holds the free memory in KB
   if (${memory_max_string} MATCHES "^[0-9]+")
     math(EXPR memory_in_gb "${memory_max_string} / (1024 * 1024)") ## KB to GB conversion
   else()
