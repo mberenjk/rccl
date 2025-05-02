@@ -44,7 +44,7 @@ typedef struct
 
 #include <hip/hip_fp8.h>
 
-#if (defined(__gfx950__) || defined(__gfx1200__) || defined(__gfx1201__) ||  (defined(__gfx1100__) || defined(__gfx1101__)))//HIP_FP8_TYPE_OCP is enabled.
+#if HIP_FP8_TYPE_OCP || (defined(__gfx950__) || defined(__gfx1200__) || defined(__gfx1201__) ||  (defined(__gfx1100__) || defined(__gfx1101__)))//HIP_FP8_TYPE_OCP is enabled.
 typedef __hip_fp8_e4m3 rccl_float8;
 typedef __hip_fp8_e5m2 rccl_bfloat8;
 //HIP_FP8_TYPE_FNUZ is enabled.
