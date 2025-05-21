@@ -305,7 +305,7 @@ SPECIALIZE_REDUCE(FuncMinMax, half, 1, half, fn.isMinNotMax ? __hmin(x, y) : __h
   SPECIALIZE_REDUCE(FuncMinMax, __nv_fp8_e5m2, 2, __nv_fp8x2_e5m2, __nv_fp8x2_e5m2(fn.isMinNotMax ? __hmin2(__half2(x), __half2(y)) : __hmax2(__half2(x), __half2(y))))
 #else
   #if (defined(__gfx942__))
-  SPECIALIZE_REDUCE(FuncSum, rccl_float8, 1, rccl_float8, rccl_float8( __half(__hip_cvt_fp8_to_halfraw((x.__x), __HIP_E4M3)) + __half(__hip_cvt_fp8_to_halfraw((y.__x), __HIP_E4M3))))
+  SPECIALIZE_REDUCE(FuncSum, rccl_float8, 1, rccl_float8, rccl_float8( __half(__hip_cvt_fp8_to_halfraw((x.__x), __HIP_E4M3_FNUZ)) + __half(__hip_cvt_fp8_to_halfraw((y.__x), __HIP_E4M3_FNUZ))))
   #else
   SPECIALIZE_REDUCE(FuncSum, rccl_float8, 1, rccl_float8, rccl_float8( __half(__hip_cvt_fp8_to_halfraw((x.__x), __HIP_E4M3)) + __half(__hip_cvt_fp8_to_halfraw((y.__x), __HIP_E4M3))))
   #endif
