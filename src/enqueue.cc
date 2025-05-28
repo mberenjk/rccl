@@ -22,6 +22,8 @@
 #include "transport.h"
 #include "common.h"
 #include "api_trace.h"
+#include "barrier.h"
+#include <cassert>
 #include <cstring> // std::memcpy
 #include <cinttypes> // PRIx64
 #include <cassert>
@@ -1503,6 +1505,7 @@ ncclResult_t ncclLaunchKernelBefore_NoUncapturedCuda(struct ncclComm* comm, stru
 // NCCL uses the "Remote" Mem Sync domain by default
 NCCL_PARAM(MemSyncDomain, "MEM_SYNC_DOMAIN", cudaLaunchMemSyncDomainRemote);
 #endif
+RCCL_PARAM(InsertBarrier, "INSERT_BARRIER", -1);
 
 ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   struct ncclKernelPlanner* planner = &comm->planner;
@@ -1519,6 +1522,16 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   if (planner->numStreams == 1 && !plan->persistent) {
     CUDACHECK(hipExtLaunchKernel(plan->kernelFn, grid, block, extra, 0, launchStream, NULL, comm->doneEvent, 0));
     comm->lastStream = planner->streams->stream;
+  void *args[3] = {&comm->devComm, &plan->channelMask, &plan->workHead};
+
+
+  if(rcclParamInsertBarrier() == 1) {
+    void *temp_args[] = {&comm->devComm, &plan->channelMask, &plan->workHead, &comm->barrierWorkElem, comm->barrierSendBuffer, comm->barrierRecvBuffer, &comm->devComm};
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid1, block1, temp_args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
+  }
+  if (tasks->numStreams == 1 && !plan->persistent) {
+    CUDACHECK(hipExtLaunchKernel(plan->kernelFn, grid, block, args, 0, tasks->streams->stream, NULL, comm->doneEvent, 0));
+    comm->lastStream = tasks->streams->stream;
     return ncclSuccess;
   }
 

@@ -37,4 +37,5 @@ rccl_static inline size_t ncclFuncMaxSendRecvCount(ncclFunc_t func, int nRanks, 
   return func == ncclFuncAllGather || func == ncclFuncReduceScatter ? nRanks*count : count;
 }
 
+
 #endif // End include guard
