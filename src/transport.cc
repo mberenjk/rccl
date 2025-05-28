@@ -88,6 +88,7 @@ NCCL_PARAM(ReportConnectProgress, "REPORT_CONNECT_PROGRESS", 0);
 #include <sys/time.h>
 
 ncclResult_t ncclTransportCheckP2pType(struct ncclComm* comm, bool* intraNodeP2pSupport, bool* directMode) {
+  //printf("ncclTransportCheckP2pType");
   bool supportFlag = true;
   bool directFlag = false;
   if (comm->localRanks == 1) {

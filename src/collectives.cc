@@ -105,12 +105,31 @@ ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sen
   return ncclEnqueueCheck(&info);
 }
 
+ncclResult_t ncclBarrier_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream) {
+  NVTX3_FUNC_WITH_PARAMS(Broadcast, NcclNvtxParamsBroadcast,
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), root, datatype));
+
+  struct ncclInfo info = { ncclFuncBarrier, "Barrier",
+    sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
+    BROADCAST_CHUNKSTEPS, BROADCAST_SLICESTEPS };
+
+
+  return ncclEnqueueCheck(&info);
+}
+
 NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream);
 
 
 ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream) {
+
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks ));
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, 4 * comm->nRanks));
+    ncclBarrier_impl(comm->barrierSendBuffer, comm->barrierRecvBuffer, 1,
+      ncclInt8, 0, comm, stream);
+
   NVTX3_FUNC_WITH_PARAMS(AllReduce, NcclNvtxParamsAllReduce,
     NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), op, datatype));
 

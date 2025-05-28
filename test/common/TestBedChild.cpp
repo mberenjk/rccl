@@ -11,6 +11,8 @@
 #ifdef ENABLE_OPENMP
 #include <omp.h>
 #endif
+#include <chrono>
+#include <random>
 
 static int getThreadId()
 {
@@ -462,6 +464,14 @@ namespace RcclUnitTesting
     int numRanksToExecute, tempRank;
     std::vector<int> ranksToExecute = {};
     PIPE_READ(numRanksToExecute);
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> delay_dist(10, 500);
+    int random_delay = delay_dist(gen);
+    printf("Applying random delay of = %d ms before kernel launch. \n" , random_delay);
+    std::this_thread::sleep_for(std::chrono::milliseconds(random_delay));
+
 
     for (int rank = 0; rank < numRanksToExecute; ++rank){
       PIPE_READ(tempRank);

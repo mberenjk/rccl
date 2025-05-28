@@ -125,6 +125,7 @@ private:
       while (connStepCache + (isSendNotRecv ? NCCL_STEPS : 0) < step + StepPerSlice) {
         __builtin_amdgcn_s_sleep(1);
         connStepCache = loadStepValue(connStepPtr);
+        //printf("connStepCache = %d connStepPtr = %d\n", connStepCache, connStepPtr);
         if (checkAbort(spins)) break;
         //if (spins == 0) printf("r=%d b=%d t=%d SPUN OUT got=%d want=%d\n", ncclShmem.comm.rank, blockIdx.x, threadIdx.x, int(connStepCache + (isSendNotRecv ? NCCL_STEPS : 0)), int(step+StepPerSlice));
         if (spins == 0 && repeat > 0) {
