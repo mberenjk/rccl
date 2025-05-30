@@ -658,7 +658,7 @@ struct ncclComm {
 //#ifdef ENABLE_BARRIER
   uint8_t* barrierSendBuffer;
   uint8_t* barrierRecvBuffer;
-  ncclWorkElem* barrierWorkElem;
+  ncclDevWorkColl* barrierWork;
 //#endif
 
   // Whether this comm is compatible with MSCCL

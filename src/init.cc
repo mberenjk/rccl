@@ -566,7 +566,6 @@ ncclResult_t ncclCommEnsureReady(ncclComm_t comm) {
 exit:
   return ret;
 }
-//RCCL_PARAM(InsertBarrier, "INSERT_BARRIER", -1);
 
 RCCL_PARAM(InjectFaults, "INJECT_FAULTS", 0);
 
@@ -636,6 +635,18 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
   }
 #endif
 
+//if(rcclParamInsertBarrier() == 1) {
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks));
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, 4 * comm->nRanks));
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierWork, sizeof(ncclDevWorkColl)));
+    comm->barrierWork->sendbuff = (void*)comm->barrierSendBuffer;
+    comm->barrierWork->recvbuff = (void*)comm->barrierRecvBuffer;
+    // comm->barrierWork->sendbuffOffset = task->sendbuffOffset;
+    // comm->barrierWork->recvbuffOffset = task->recvbuffOffset;
+    comm->barrierWork->root = 0;
+    comm->barrierWork->nWarps = 4;
+    //comm->barrierWork->nChannels = 1;
+
   if (rcclParamInjectFaults() != 0) {
 #ifdef ENABLE_FAULT_INJECTION
     comm->faults = rcclParamInjectFaults();
@@ -644,27 +655,6 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
     WARN("Ignore faults injection of value 0x%lx as RCCL is not compiled to support it", rcclParamInjectFaults());
 #endif
   }
-  //if(rcclParamInsertBarrier() == 1) {
-    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks));
-    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, 4 * comm->nRanks));
-    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierWorkElem, sizeof(ncclWorkElem)));
-
-    comm->barrierWorkElem->sendbuff = comm->barrierSendBuffer;
-    comm->barrierWorkElem->recvbuff = comm->barrierRecvBuffer;
-    comm->barrierWorkElem->regUsed = 0;
-    comm->barrierWorkElem->nWarps = 4;
-    comm->barrierWorkElem->flagBits = 1;
-    comm->barrierWorkElem->chunkCount = 4096;
-    comm->barrierWorkElem->workCount = 1;
-    comm->barrierWorkElem->count = 1;
-    comm->barrierWorkElem->workOffset = 0;
-    comm->barrierWorkElem->nChannels = 4096;
-    comm->barrierWorkElem->bid = 0;
-    comm->barrierWorkElem->root = 0;
-    comm->barrierWorkElem->pivotA2ANumBiRings = 0;
-
-  //}
-
 
   comm->collNetSupport = 0;
   memset(comm->collNetSupportMatrix, 0, sizeof(comm->collNetSupportMatrix));
