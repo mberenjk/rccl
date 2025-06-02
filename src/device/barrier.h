@@ -139,13 +139,7 @@ namespace {
       // Primitives<T, RedOp, FanSymmetric<1>, 0, Proto, 0>
       //   prims(tid, workNthreads, &ring->prev, &ring->next, inputBuf, outputBuf, work->redOpArg, 0, work->connIndex, work->connIndex, work);
 
-#if defined(ENABLE_NPKIT)
-      if (tid == 0) {
-        prims.npKitCtxIdx = npKitCtxIdx;
-      }
-#endif
-
-      for (size_t elemOffset = 0; elemOffset < channelCount; elemOffset += chunkCount) {
+    for (size_t elemOffset = 0; elemOffset < channelCount; elemOffset += chunkCount) {
         offset = gridOffset + elemOffset;
         nelem = min(chunkCount, channelCount - elemOffset);
 
@@ -184,5 +178,5 @@ __global__ __forceinline__ void rcclWaitForAllRanksBarrier(struct ncclDevComm* c
   int w = 0;
   struct ncclDevWorkColl* work = (struct ncclDevWorkColl*)(ncclShmem.workStorage + w*ncclShmem.workSize);
   int subtn = work->nWarps*WARP_SIZE;
-  //runRing(tid, subtn, work);
+  runRing(tid, subtn, work);
 }

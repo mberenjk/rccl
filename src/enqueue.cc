@@ -1525,7 +1525,7 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
     dim3 block1 = {(unsigned)plan->threadPerBlock, 1, 1};
     //void *temp_args[] = {&comm->devComm, &plan->channelMask, &plan->workHead, &comm->barrierWorkElem, comm->barrierSendBuffer, comm->barrierRecvBuffer, &comm->devComm};
     void* temp_args[] = { &comm->devComm, &plan->channelMask, plan->kernelArgs, &plan->kernelArgsSize};
-    //CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid1, block1, temp_args, 0, launchStream, NULL, comm->doneEvent, 0));
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid1, block1, temp_args, 0, launchStream, NULL, comm->doneEvent, 0));
   }
 
   if (planner->numStreams == 1 && !plan->persistent) {
