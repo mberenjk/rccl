@@ -29,6 +29,7 @@ namespace {
     ssize_t channelCount;
     ssize_t chunkCount;
     ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, sizeof(T), &size, &gridOffset, &channelCount, &chunkCount);
+    //printf("channelCount = %d, chunkCount = %d, gridOffset = %d, size = %d \n", channelCount, chunkCount, gridOffset, size);
     const ssize_t loopCount = nranks * chunkCount;
     ssize_t offset;
     int nelem;

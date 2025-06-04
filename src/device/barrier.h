@@ -14,10 +14,11 @@
   int tn = blockDim.x;
   int x = tid;
   int total = 0, y;
-  int num = 1;//MAXCHANNELS/64 > 0 ? MAXCHANNELS/64 : 1;
+  int num = MAXCHANNELS/64 > 0 ? MAXCHANNELS/64 : 1;
   if (tid < sizeof(ncclDevKernelArgs)/sizeof(uint32_t)) {
     ((uint32_t*)&ncclShmem.args)[tid] = ((uint32_t*)args)[tid];
   }
+  printf("blockIdx.x = %d \n", blockIdx.x);
 
   switch (tid/WARP_SIZE) {
   case 0:
@@ -120,28 +121,58 @@ namespace {
     ssize_t gridOffset;
     using Proto = ProtoSimple<1, 1, 2, 0, 1>; //hard-coded COLL_UNROLL to 2
     ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, 1, &size, &gridOffset, &channelCount, &chunkCount);
+    size =1;
+    channelCount = 1;
+    chunkCount = 1;
+    gridOffset = 0;
     size_t offset;
     int nelem;
     int workNthreads;
     bool isNetOffload = work->isOneRPN && work->netRegUsed;
-
     char *inputBuf = (char*)work->sendbuff;
     char *outputBuf = (char*)work->recvbuff;
     workNthreads = isNetOffload ? WARP_SIZE : nthreads;
 
+    #if defined(ENABLE_NPKIT)
+    int npKitCtxIdx = bid;
+    #endif
+
+    #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
+    if (tid == 0) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, NPKIT_GET_CPU_TIMESTAMP_FROM_BLOCK,
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+    #endif
+
+    #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
+    if (tid == 0) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, NPKIT_GET_GPU_TIMESTAMP(),
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+    #endif
+
+    #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_BROADCAST_RING_ENTRY)
+    if (tid == 0) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_BROADCAST_RING_ENTRY, size*sizeof(T), 0, NPKIT_GET_GPU_TIMESTAMP(),
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+    #endif
     if (tid < workNthreads) {
       // Coverity reports that the callee treats &ring->next as an array.  However, due to the use of
       // FanSymmetric<1>, only the first element is ever accessed, so it's fine.
       // coverity[callee_ptr_arith:FALSE]
-    
     Primitives<uint8_t, FuncSum<uint8_t>, FanSymmetric<1>, 0, Proto, 0>
       prims(tid, workNthreads, &ring->prev, &ring->next, inputBuf, outputBuf, 0, 0, 0, 0, work);
-      // Primitives<T, RedOp, FanSymmetric<1>, 0, Proto, 0>
-      //   prims(tid, workNthreads, &ring->prev, &ring->next, inputBuf, outputBuf, work->redOpArg, 0, work->connIndex, work->connIndex, work);
 
+    #if defined(ENABLE_NPKIT)
+      if (tid == 0) {
+        prims.npKitCtxIdx = npKitCtxIdx;
+      }
+    #endif      
     for (size_t elemOffset = 0; elemOffset < channelCount; elemOffset += chunkCount) {
         offset = gridOffset + elemOffset;
         nelem = min(chunkCount, channelCount - elemOffset);
+        //printf("nelem = %d \n", nelem);
 
         if (rank == root) {
           if (inputBuf == outputBuf || isNetOffload) {
@@ -156,12 +187,17 @@ namespace {
         }
       }
     } else if (inputBuf != outputBuf && rank == root) {
-      // inputBuf = inputBuf + gridOffset;
-      // outputBuf = outputBuf + gridOffset;
-      // reduceCopy<COLL_UNROLL, RedOp, T, 0, 1, 1, 0, 1, 1, /*PreOpSrcs=*/0>
-      //   (tid - workNthreads, nthreads - workNthreads, work->redOpArg, &work->redOpArg, false, 1, (void**)&inputBuf, 1, (void**)&outputBuf, channelCount);
+      inputBuf = inputBuf + gridOffset;
+      outputBuf = outputBuf + gridOffset;
+      reduceCopy<2, FuncSum<uint8_t>, uint8_t, 0, 1, 1, 0, 1, 1, /*PreOpSrcs=*/0>
+        (tid - workNthreads, nthreads - workNthreads, work->redOpArg, &work->redOpArg, false, 1, (void**)&inputBuf, 1, (void**)&outputBuf, channelCount);
     }
-
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_BROADCAST_RING_EXIT)
+    if (tid == 0) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_BROADCAST_RING_EXIT, size*sizeof(T), 0, NPKIT_GET_GPU_TIMESTAMP(),
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+#endif
 #if !defined(__HIP_PLATFORM_AMD__) && !defined(__HIPCC__)
     if (isNetOffload) barrier_sync(14, nThreads);
 #endif
@@ -170,13 +206,13 @@ namespace {
 
 
 
-__global__ __forceinline__ void rcclWaitForAllRanksBarrier(struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclDevKernelArgs const* args)//struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclWork* workHead, ncclDevWorkColl *args, ncclDevComm* devComm)
+__global__ __forceinline__ void rcclWaitForAllRanksBarrier(struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclDevWorkColl* work,  struct ncclDevKernelArgs const* args)//struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclWork* workHead, ncclDevWorkColl *args, ncclDevComm* devComm)
 {
   copyShmemData(comm, channelMask, args);
   int tid = threadIdx.x;
   int tn = blockDim.x;
   int w = 0;
-  struct ncclDevWorkColl* work = (struct ncclDevWorkColl*)(ncclShmem.workStorage + w*ncclShmem.workSize);
+  //struct ncclDevWorkColl* work = (struct ncclDevWorkColl*)(ncclShmem.workStorage + w*ncclShmem.workSize);
   int subtn = work->nWarps*WARP_SIZE;
   runRing(tid, subtn, work);
 }
