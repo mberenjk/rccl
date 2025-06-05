@@ -18,8 +18,7 @@
   if (tid < sizeof(ncclDevKernelArgs)/sizeof(uint32_t)) {
     ((uint32_t*)&ncclShmem.args)[tid] = ((uint32_t*)args)[tid];
   }
-  printf("blockIdx.x = %d \n", blockIdx.x);
-
+  
   switch (tid/WARP_SIZE) {
   case 0:
     ncclShmem.channelId = blockIdx.x;
