@@ -640,7 +640,8 @@ static ncclResult_t proxySharedInit(struct ncclProxyConnection* connection, stru
 static ncclResult_t sendProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   struct setupReq* req = (struct setupReq*) reqBuff;
   if (reqSize != sizeof(struct setupReq)) return ncclInternalError;
-
+  //sleep(10);
+  //printf("sendProxySetup \n");
   struct sendNetResources* resources;
   NCCLCHECK(ncclCalloc(&resources, 1));
   connection->transportResources = resources;

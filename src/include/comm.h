@@ -656,8 +656,8 @@ struct ncclComm {
 #endif
 
 //#ifdef ENABLE_BARRIER
-  uint8_t* barrierSendBuffer;
-  uint8_t* barrierRecvBuffer;
+  void* barrierSendBuffer;
+  void* barrierRecvBuffer;
   ncclDevWorkColl* barrierWork;
 //#endif
 

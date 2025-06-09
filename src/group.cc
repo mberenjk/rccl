@@ -576,7 +576,7 @@ ncclResult_t ncclGroupEndInternal(ncclSimInfo_t* simInfo) {
           job = job->next;
         } while (job);
       }
-
+      int count = 0;
       if (ncclGroupCommHead) {
         ncclComm_t comm = ncclGroupCommHead;
         do {
@@ -584,6 +584,7 @@ ncclResult_t ncclGroupEndInternal(ncclSimInfo_t* simInfo) {
           /* link group job to communicators. */
           comm->groupJob = ncclGroupJobMainPtr;
           comm = comm->groupNext;
+          printf("count = %d \n", count++);
         } while (comm);
       }
 

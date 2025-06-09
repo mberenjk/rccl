@@ -105,28 +105,40 @@ ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sen
   return ncclEnqueueCheck(&info);
 }
 
-// ncclResult_t ncclBarrier_impl(const void* sendbuff, void* recvbuff, size_t count,
-//     ncclDataType_t datatype, ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream) {
-//   struct NvtxParamsReduce {
-//     size_t bytes;
-//     int root;
-//     ncclRedOp_t op;
-//   };
-//   constexpr nvtxPayloadSchemaEntry_t ReduceSchema[] = {
-//     {0, NVTX_PAYLOAD_ENTRY_TYPE_SIZE, "Message size [bytes]"},
-//     {0, NVTX_PAYLOAD_ENTRY_TYPE_INT, "Root", nullptr, 0, offsetof(NvtxParamsReduce, root)},
-//     {0, NVTX_PAYLOAD_ENTRY_NCCL_REDOP, "Reduction operation", nullptr, 0,
-//       offsetof(NvtxParamsReduce, op)}
-//   };
-//   NvtxParamsReduce payload{count * ncclTypeSize(datatype), root, op};
-//   NVTX3_FUNC_WITH_PARAMS(Reduce, ReduceSchema, payload)
 
-//   struct ncclInfo info = { ncclFuncReduce, "rcclWaitBarrier",
-//     sendbuff, recvbuff, count, datatype, op, root, comm, stream, /* Args */
-//     REDUCE_CHUNKSTEPS, REDUCE_SLICESTEPS };
-//   NCCLCHECK(ncclEnqueueCheck(&info));
-//   return ncclSuccess;
-// }
+NCCL_API(ncclResult_t, ncclBroadcast, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream);
+
+ncclResult_t ncclBroadcast_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream) {
+  NVTX3_FUNC_WITH_PARAMS(Broadcast, NcclNvtxParamsBroadcast,
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), root, datatype));
+
+  struct ncclInfo info = { ncclFuncBroadcast, "Broadcast",
+    sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
+    BROADCAST_CHUNKSTEPS, BROADCAST_SLICESTEPS };
+
+  if (!mscclIsCaller()) // when msccl falls back to
+  {
+    NCCLCHECK(Recorder::instance().record(rrBroadcast, info));
+  }
+
+  if (mscclAvailable(comm->rank) && !mscclIsCaller()) {
+    return mscclEnqueueCheck(
+      sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
+      count, datatype, root, 0, ncclSum, mscclFuncBroadcast, comm, stream);
+  }
+
+  return ncclEnqueueCheck(&info);
+}
+/* Deprecated original "in place" function, similar to MPI */
+NCCL_API(ncclResult_t, ncclBcast, void* buff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream);
+ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm_t comm, cudaStream_t stream) {
+  NCCLCHECK(Recorder::instance().record(rrBcast, buff, buff, count, datatype, comm, stream, root));
+  return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
+}
 
 NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream);
@@ -145,20 +157,13 @@ ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t cou
   {
     NCCLCHECK(Recorder::instance().record(rrAllReduce, info));
   }
-  // ncclBarrier_impl(comm->barrierSendBuffer, comm->barrierRecvBuffer, 1,
-  //     ncclInt8, ncclSum, 0, comm, stream);
-  // struct NvtxParamsAllReduce {
-  //   size_t bytes;
-  //   ncclRedOp_t op;
-  // };
-  // Just pass the size of one message and not the total bytes sent/received.
-  // static constexpr nvtxPayloadSchemaEntry_t AllReduceSchema[] = {
-  //   {0, NVTX_PAYLOAD_ENTRY_TYPE_SIZE, "Message size [bytes]"},
-  //   {0, NVTX_PAYLOAD_ENTRY_NCCL_REDOP, "Reduction operation", nullptr, 0,
-  //     offsetof(NvtxParamsAllReduce, op)}
-  // };
-  // NvtxParamsAllReduce payload{count * ncclTypeSize(datatype), op};
-  // NVTX3_FUNC_WITH_PARAMS(AllReduce, AllReduceSchema, payload)
+
+  //----------------------Barrier check--------------------------------//
+  NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks ));
+  NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, 4 * comm->nRanks));
+   ncclBroadcast_impl(comm->barrierSendBuffer, comm->barrierRecvBuffer, 1,
+      ncclInt8, 0, comm, stream);
+  //----------------------------------------------------------------------
 
   if (mscclAvailable(comm->rank) && !mscclIsCaller()) {
     return mscclEnqueueCheck(
@@ -260,39 +265,6 @@ ncclResult_t ncclAllToAllv_impl(const void *sendbuff, const size_t sendcounts[],
   return ncclSuccess;
 }
 
-NCCL_API(ncclResult_t, ncclBroadcast, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
-    ncclComm_t comm, cudaStream_t stream);
-
-ncclResult_t ncclBroadcast_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
-    ncclComm_t comm, cudaStream_t stream) {
-  NVTX3_FUNC_WITH_PARAMS(Broadcast, NcclNvtxParamsBroadcast,
-    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), root, datatype));
-
-  struct ncclInfo info = { ncclFuncBroadcast, "Broadcast",
-    sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
-    BROADCAST_CHUNKSTEPS, BROADCAST_SLICESTEPS };
-
-  if (!mscclIsCaller()) // when msccl falls back to
-  {
-    NCCLCHECK(Recorder::instance().record(rrBroadcast, info));
-  }
-
-  if (mscclAvailable(comm->rank) && !mscclIsCaller()) {
-    return mscclEnqueueCheck(
-      sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
-      count, datatype, root, 0, ncclSum, mscclFuncBroadcast, comm, stream);
-  }
-
-  return ncclEnqueueCheck(&info);
-}
-/* Deprecated original "in place" function, similar to MPI */
-NCCL_API(ncclResult_t, ncclBcast, void* buff, size_t count, ncclDataType_t datatype, int root,
-    ncclComm_t comm, cudaStream_t stream);
-ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root,
-    ncclComm_t comm, cudaStream_t stream) {
-  NCCLCHECK(Recorder::instance().record(rrBcast, buff, buff, count, datatype, comm, stream, root));
-  return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
-}
 
 NCCL_API(ncclResult_t, ncclGather, const void* sendbuff, void* recvbuff, size_t sendcount,
     ncclDataType_t datatype, int root, ncclComm_t comm, hipStream_t stream);

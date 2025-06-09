@@ -327,6 +327,7 @@ fail:
 }
 
 ncclResult_t ncclNvlsSetup(struct ncclComm* comm, struct ncclComm* parent) {
+  printf("ncclNvlsSetup \n");
   ncclResult_t res = ncclSuccess;
   size_t typeSize;
   char shmPath[sizeof("/dev/shm/nccl-XXXXXX")];

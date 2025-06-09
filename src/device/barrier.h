@@ -119,7 +119,8 @@ namespace {
     ssize_t channelCount;
     ssize_t gridOffset;
     using Proto = ProtoSimple<1, 1, 2, 0, 1>; //hard-coded COLL_UNROLL to 2
-    ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, 1, &size, &gridOffset, &channelCount, &chunkCount);
+    //ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, 1, &size, &gridOffset, &channelCount, &chunkCount);
+    return;
     size =1;
     channelCount = 1;
     chunkCount = 1;
@@ -130,6 +131,7 @@ namespace {
     bool isNetOffload = work->isOneRPN && work->netRegUsed;
     char *inputBuf = (char*)work->sendbuff;
     char *outputBuf = (char*)work->recvbuff;
+    return;
     workNthreads = isNetOffload ? WARP_SIZE : nthreads;
 
     #if defined(ENABLE_NPKIT)
@@ -207,11 +209,11 @@ namespace {
 
 __global__ __forceinline__ void rcclWaitForAllRanksBarrier(struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclDevWorkColl* work,  struct ncclDevKernelArgs const* args)//struct ncclDevComm* comm, struct channelMasks channelMask, struct ncclWork* workHead, ncclDevWorkColl *args, ncclDevComm* devComm)
 {
-  copyShmemData(comm, channelMask, args);
+  //copyShmemData(comm, channelMask, args);
   int tid = threadIdx.x;
   int tn = blockDim.x;
   int w = 0;
   //struct ncclDevWorkColl* work = (struct ncclDevWorkColl*)(ncclShmem.workStorage + w*ncclShmem.workSize);
   int subtn = work->nWarps*WARP_SIZE;
-  runRing(tid, subtn, work);
+  //runRing(tid, subtn, work);
 }

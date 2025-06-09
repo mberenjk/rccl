@@ -636,14 +636,11 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
 #endif
 
 //if(rcclParamInsertBarrier() == 1) {
-    uint8_t* barrierSendBuffer;
-    uint8_t* barrierRecvBuffer;
     printf("comm->nRanks = %d \n", comm->nRanks);
-    NCCLCHECK(ncclCudaHostCalloc(&barrierSendBuffer, 4 * comm->nRanks ));
-    NCCLCHECK(ncclCudaHostCalloc(&barrierRecvBuffer, 4 * comm->nRanks));
+    
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierWork, sizeof(ncclDevWorkColl)));
-    comm->barrierWork->sendbuff = (void*)barrierSendBuffer;
-    comm->barrierWork->recvbuff = (void*)barrierRecvBuffer;
+    comm->barrierWork->sendbuff = (void*)comm->barrierSendBuffer;
+    comm->barrierWork->recvbuff = (void*)comm->barrierRecvBuffer;
     comm->barrierWork->channelLo = 0;
     comm->barrierWork->channelHi = 1;
     comm->barrierWork->cbd.countLo = 0;
