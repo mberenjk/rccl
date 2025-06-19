@@ -54,7 +54,67 @@ typedef __hip_fp8_e5m2_fnuz rccl_bfloat8;
 typedef __hip_fp8_e4m3 rccl_float8;
 typedef __hip_fp8_e5m2 rccl_bfloat8;
 #endif
-    
+
+typedef _Float16 half_t;
+typedef _Float16 half2_t __attribute__((ext_vector_type(2)));
+//typedef uint8_t rccl_float8x2 __attribute__((ext_vector_type(2)));
+// struct rccl_float8x2 {
+//     rccl_float8 x;
+//     rccl_float8 y;
+// };
+//typedef uint16_t __amd_fp8x2_storage_t;
+typedef short shortx2_t __attribute__((ext_vector_type(2)));
+typedef short __attribute__((ext_vector_type(2))) __amd_shortx2_storage_t;
+
+inline __device__ half2_t amd_assembly_pk_add_f16(half2_t a, half2_t b)
+{
+    half2_t c;
+    asm volatile("v_pk_add_f16 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+
+__device__ __forceinline__ rccl_float8 cast_to_f8_from_f16(_Float16 v, unsigned int rng = 0)
+{
+#if   __HIP_DEVICE_COMPILE__ && defined(__gfx950__)
+    union {
+      unsigned int ui32;
+      rccl_float8 fp8[4];
+    } u{0};
+    u.ui32 = __builtin_amdgcn_cvt_pk_fp8_f32(v, v, 0, false);
+    return u.fp8[0];
+#endif
+}
+
+static __device__ __hip_fp8x2_storage_t fp16_2_fp8(half2_t v, unsigned int rng = 0)
+{
+#if defined(__gfx950__)
+    union
+    {
+        unsigned int i32val;
+        half2_t half_vec;
+        shortx2_t i16_vec;
+        __hip_fp8_storage_t i8val[4];
+    } val;
+
+    constexpr shortx2_t i16x2val = {0, 0};
+    val.half_vec             = v;
+
+    val.i16_vec =
+        __builtin_amdgcn_cvt_scalef32_pk_fp8_f16(i16x2val, val.half_vec, /* scale */ 1.f, 0);
+
+    return 0.f;//__hip_fp8x2_storage_t{val.i8val[0], val.i8val[1]};
+//     union {
+//     __amd_shortx2_storage_t shortx2;
+//     __hip_fp8x2_storage_t fp8x2[2];
+//   } u{0};
+//   u.shortx2 = 
+//        __builtin_amdgcn_cvt_scalef32_pk_fp8_f16(u.shortx2, v, 1.f, false);
+      
+#else 
+    return 0.f;
+#endif
+}
+
 inline std::ostream& operator<<(std::ostream& os, const rccl_float8& f8)
 {
     return os << float(f8);
