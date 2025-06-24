@@ -57,11 +57,8 @@ typedef __hip_fp8_e5m2 rccl_bfloat8;
 
 typedef _Float16 half_t;
 typedef _Float16 half2_t __attribute__((ext_vector_type(2)));
-//typedef uint8_t rccl_float8x2 __attribute__((ext_vector_type(2)));
-// struct rccl_float8x2 {
-//     rccl_float8 x;
-//     rccl_float8 y;
-// };
+typedef unsigned short int rccl_float8x2;
+
 //typedef uint16_t __amd_fp8x2_storage_t;
 typedef short shortx2_t __attribute__((ext_vector_type(2)));
 typedef short __attribute__((ext_vector_type(2))) __amd_shortx2_storage_t;
