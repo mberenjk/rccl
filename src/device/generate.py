@@ -77,63 +77,63 @@ func_pattern = sys.argv[6:7]
 if func_pattern and func_pattern[0]:
   func_pattern = func_pattern[0]
 else:
-  func_pattern = "AllGather|AllReduce|AllReduceWithBias|AllToAllPivot|Broadcast|Reduce|ReduceScatter|SendRecv"
+  func_pattern = "AllGather|AllReduce|AllToAllPivot|Broadcast|Reduce|ReduceScatter|SendRecv|AllReduceWithBias"
 
 ################################################################################
 
 algos_of_coll = {
   "AllGather":             ["RING", "PAT"],
-  "AllReduce":             ["RING", "TREE"],
-  "AllReduceWithBias":     ["RING", "TREE"],
+  "AllReduce":             ["RING", "TREE"],  
   "AllToAllPivot":         ["RING"],
   "Broadcast":             ["RING"],
   "Reduce":                ["RING"],
   "ReduceScatter":         ["RING", "PAT"],
-  "SendRecv":              ["RING"]
+  "SendRecv":              ["RING"],
+  "AllReduceWithBias":     ["RING", "TREE"]
 }
 
 protos_of_coll = {
   "AllGather":              all_protos,
-  "AllReduce":              all_protos,
-  "AllReduceWithBias":      all_protos,
+  "AllReduce":              all_protos,  
   "AllToAllPivot":          ["SIMPLE"],
   "Broadcast":              all_protos,
   "Reduce":                 all_protos,
   "ReduceScatter":          all_protos,
-  "SendRecv":               ["SIMPLE"]
+  "SendRecv":               ["SIMPLE"],
+  "AllReduceWithBias":      all_protos
 }
 
 redops_of_coll = {
   "AllGather":            ["Sum"],
-  "AllReduce":            all_redops,
-  "AllReduceWithBias":    all_redops,
+  "AllReduce":            all_redops,  
   "AllToAllPivot":        ["Sum"],
   "Broadcast":            ["Sum"],
   "Reduce":               all_redops,
   "ReduceScatter":        all_redops,
-  "SendRecv":             ["Sum"]
+  "SendRecv":             ["Sum"],
+  "AllReduceWithBias":    all_redops
 }
 
 tys_of_coll = {
   "AllGather":     ["i8"],
-  "AllReduce":     all_tys,
-  "AllReduceWithBias":     all_tys,
+  "AllReduce":     all_tys,  
   "AllToAllPivot": ["i8"],
   "Broadcast":     ["i8"],
   "Reduce":        all_tys,
   "ReduceScatter": all_tys,
-  "SendRecv":      ["i8"]
+  "SendRecv":      ["i8"],
+  "AllReduceWithBias":     all_tys
 }
 
 coll_camel_to_lower = {
   "AllGather":             "all_gather",
-  "AllReduce":             "all_reduce",
-  "AllReduceWithBias":     "allreduce_with_bias",
+  "AllReduce":             "all_reduce",  
   "AllToAllPivot":         "alltoall_pivot",
   "Broadcast":             "broadcast",
   "Reduce":                "reduce",
-  "ReduceScatter": "reduce_scatter",
-  "SendRecv":      "sendrecv"
+  "ReduceScatter":          "reduce_scatter",
+  "SendRecv":               "sendrecv",
+  "AllReduceWithBias":     "allreduce_with_bias"
 }
 coll_lower_to_camel = {coll_camel_to_lower[x]: x for x in coll_camel_to_lower}
 
@@ -269,10 +269,11 @@ def enumerate_func_rows():
         for proto in all_protos:
           for redop in all_redops:
             for ty in all_tys:
-              if func_validate(coll, algo, proto, redop, ty, "0", unroll):
-                if coll == "AllReduceWithBias":
-                  yield (coll, algo, proto, redop, ty, "1", unroll)
-                else:
+              for acc in use_acc:
+                if func_validate(coll, algo, proto, redop, ty, acc, unroll):
+                # if coll == "AllReduceWithBias":
+                #   yield (coll, algo, proto, redop, ty, "1", unroll)
+                # else:
                   yield (coll, algo, proto, redop, ty, "0", unroll)
 
 # Sort the hashmap based on custom key <coll> <algo> <proto> <redop> <ty>
