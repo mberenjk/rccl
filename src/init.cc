@@ -658,6 +658,22 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
   }
 #endif
 
+ NCCLCHECK(ncclCudaHostCalloc(&comm->barrierWork, sizeof(ncclDevWorkColl)));
+    comm->barrierWork->sendbuff = (void*)comm->barrierSendBuffer;
+    comm->barrierWork->recvbuff = (void*)comm->barrierRecvBuffer;
+    comm->barrierWork->channelLo = 0;
+    comm->barrierWork->channelHi = 1;
+    comm->barrierWork->cbd.countLo = 0;
+    comm->barrierWork->cbd.countHi = 0;
+    // comm->barrierWork->collnet.count = task->count;
+    // comm->barrierWork->collnet.chunkCount = chunkSize/ncclTypeSize(task->datatype);
+    // comm->barrierWork->direct = directFlags;
+    // comm->barrierWork->sendbuffOffset = task->sendbuffOffset;
+    // comm->barrierWork->recvbuffOffset = task->recvbuffOffset;
+    comm->barrierWork->root = 0;
+    comm->barrierWork->nWarps = 4;
+    //comm->barrierWork->nChannels = 1;
+
   if (rcclParamInjectFaults() != 0) {
 #ifdef ENABLE_FAULT_INJECTION
     comm->faults = rcclParamInjectFaults();
