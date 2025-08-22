@@ -144,6 +144,12 @@ NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size
 
 ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream) {
+
+     
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks ));
+    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, 4 * comm->nRanks));
+    ncclBroadcast(comm->barrierSendBuffer, comm->barrierRecvBuffer, 1,
+      ncclInt8, 0, comm, stream);
   NVTX3_FUNC_WITH_PARAMS(AllReduce, NcclNvtxParamsAllReduce,
     NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), op, datatype));
 

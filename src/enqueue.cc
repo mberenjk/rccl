@@ -1730,7 +1730,7 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
     dim3 grid1 = {(unsigned)1, 1, 1};
     dim3 block1 = {(unsigned)plan->threadPerBlock, 1, 1};
     void* temp_args[] = { &comm->devComm, &plan->channelMask, &comm->barrierWork, plan->kernelArgs, &plan->kernelArgsSize};
-    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid1, block1, temp_args, 0, launchStream, NULL, comm->doneEvent, 0));
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid, block, temp_args, 0, launchStream, NULL, comm->doneEvent, 0));
   }
 
   auto event = latency_profiler::collTraceAquireEventBaseline(plan, launchStream);
