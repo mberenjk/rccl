@@ -1725,18 +1725,22 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
   cudaStream_t launchStream = planner->streams->stream;
   void* extra[] = {plan->kernelArgs, &plan->kernelArgsSize};
 
-   //if(rcclParamInsertBarrier() == 1)
-  {
-    dim3 grid1 = {(unsigned)1, 1, 1};
-    dim3 block1 = {(unsigned)plan->threadPerBlock, 1, 1};
-    void* temp_args[] = { &comm->devComm, &plan->channelMask, &comm->barrierWork, plan->kernelArgs, &plan->kernelArgsSize};
-    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid, block, temp_args, 0, launchStream, NULL, comm->doneEvent, 0));
-  }
+  
 
   auto event = latency_profiler::collTraceAquireEventBaseline(plan, launchStream);
   if (planner->numStreams == 1 && !plan->persistent) {
+
     latency_profiler::collTraceRecordStartEvent(comm, launchStream, event.get());
     comm->lastStream = planner->streams->stream;
+
+     //if(rcclParamInsertBarrier() == 1)
+  {
+    // dim3 grid1 = {(unsigned)1, 1, 1};
+    // dim3 block1 = {(unsigned)plan->threadPerBlock, 1, 1};
+    void* temp_args[] = { &comm->devComm, &plan->channelMask, &comm->barrierWork, plan->kernelArgs, &plan->kernelArgsSize, comm->barrierSendBuffer, comm->barrierRecvBuffer};
+    CUDACHECK(hipExtLaunchKernel((const void*)rcclWaitForAllRanksBarrier, grid, block, temp_args, 0, launchStream, NULL, comm->doneEvent, 0));
+  }
+  
     CUDACHECKGOTO(hipExtLaunchKernel(plan->kernelFn, grid, block, extra, 0, launchStream, NULL, comm->doneEvent, 0), ret, do_return);
     latency_profiler::collTraceRecordEndEvent(comm, plan, launchStream, std::move(event));
     return ncclSuccess;

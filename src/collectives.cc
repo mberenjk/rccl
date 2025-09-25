@@ -141,9 +141,21 @@ ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sen
 NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream);
 
-
+//#ifdef ENABLE_INSERT_BARRIER
+#include <chrono>
+#include <random>
+//#endif
 ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream) {
+
+      //#ifdef ENABLE_INSERT_BARRIER
+      std::random_device rd;
+      std::mt19937 gen(rd());
+      std::uniform_int_distribution<> delay_dist(10, 500);
+      int random_delay = delay_dist(gen);
+      printf("Applying random delay of = %d ms before kernel launch. \n" , random_delay);
+      std::this_thread::sleep_for(std::chrono::milliseconds(random_delay));
+    //#endif
 
      
     NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks ));
