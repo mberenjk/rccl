@@ -148,20 +148,16 @@ NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size
 ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream) {
 
-      //#ifdef ENABLE_INSERT_BARRIER
+  //#ifdef ENABLE_INSERT_BARRIER
       std::random_device rd;
       std::mt19937 gen(rd());
-      std::uniform_int_distribution<> delay_dist(10, 500);
+      std::uniform_int_distribution<> delay_dist(1, 1000);
       int random_delay = delay_dist(gen);
-      printf("Applying random delay of = %d ms before kernel launch. \n" , random_delay);
-      std::this_thread::sleep_for(std::chrono::milliseconds(random_delay));
-    //#endif
+      //printf("Applying random delay of = %d ms before kernel launch. \n" , random_delay);
+      std::this_thread::sleep_for(std::chrono::microseconds(random_delay));
+  //#endif  
 
-     
-    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierSendBuffer, 4 * comm->nRanks ));
-    NCCLCHECK(ncclCudaHostCalloc(&comm->barrierRecvBuffer, 4 * comm->nRanks));
-    ncclBroadcast(comm->barrierSendBuffer, comm->barrierRecvBuffer, 1,
-      ncclInt8, 0, comm, stream);
+
   NVTX3_FUNC_WITH_PARAMS(AllReduce, NcclNvtxParamsAllReduce,
     NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), op, datatype));
 

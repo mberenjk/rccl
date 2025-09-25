@@ -36,7 +36,8 @@ namespace {
     ssize_t offset;
     int nelem;
     int chunk;
-
+    //printf("size: %zu, chunkCount: %zu, channelCount: %zu, gridOffset: %zu\n", size, chunkCount, channelCount, gridOffset);
+    
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
     if (tid == 0) {
