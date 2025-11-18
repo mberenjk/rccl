@@ -6,6 +6,7 @@ import shutil
 
 
 from dataclasses import dataclass
+from dataclasses import dataclass
 
 # Order of colls, redops, tys, protos, algos must match src/include/device.h
 all_colls     = ["Broadcast", "Reduce", "AllGather", "ReduceScatter", "AllReduce", "SendRecv", "", "", "AlltoAll"]
@@ -509,6 +510,7 @@ with open(os.path.join(gensrc, "host_table.cpp"), "w") as f:
         key = ((coll_idx & 0x3F) | ((proto_idx & 0x3F) << 8))
       if fn.coll in ["SendRecv", "AlltoAll"]:
         key = ((coll_idx & 0x3F))
+      
       out(f'  {{{key}, {fn_id}}}, {comment}\n')
   out("};\n")
 
@@ -614,10 +616,10 @@ for name in name_to_funcs.keys():
         out("#if %s\n" % guard)
       out(
         "DEFINE_ncclDevFunc({sym}, ncclFunc{coll}, {redop_cxx}, {ty_cxx}, NCCL_ALGO_{algo}, NCCL_PROTO_{proto}, {acc}, {pipeline}, {unroll})\n"
-        .format(sym=sym, coll=fn.coll, redop_cxx=redop_to_cxx[fn.redop], ty_cxx=ty_to_cxx[fn.ty],
-                algo=(fn.algo or "RING"), proto=(fn.proto or "SIMPLE"), acc=fn.acc, pipeline=fn.pipeline, unroll=fn.unroll)
+        .format(sym=sym, coll=fn.fn.coll, redop_cxx=redop_to_cxx[fn.fn.redop], ty_cxx=ty_to_cxx[fn.fn.ty],
+                algo=(fn.fn.algo or "RING"), proto=(fn.fn.proto or "SIMPLE"), acc=fn.fn.acc, pipeline=fn.fn.pipeline, unroll=fn.fn.unroll)
       )
-      if guard:
+      if guard: 
         out("#endif\n")
 
 # Generate each <gensrc>/<msccl_impl>.cpp

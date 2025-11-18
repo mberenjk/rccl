@@ -484,11 +484,6 @@ struct ncclComm {
   struct ncclTopoSystem* topo;
   struct ncclProxyConnector* gproxyConn;
   struct ncclIntruQueue<struct ncclCommCallback, &ncclCommCallback::next> legacyRegCleanupQueue;
-
-  // Unroll factor for comm [RCCL]
-  int unroll;
-  // custom collective [RCCL]
-  bool enableCustColl;
   bool peerInfoValid;
 
   ncclNet_t* ncclNet;
@@ -737,14 +732,20 @@ struct ncclComm {
   bool useNetPXN;
   bool useGdr;
   int splitCount;
-  // gfx name from hipDeviceProp_t [RCCL]
-  char* archName;
-  // multiProcessorCount from hipDeviceProp_t [RCCL]
-  int cuCount;
 
-  struct ncclDevrState devrState; // The symmetric runtime state
-  struct ncclSymkState symkState; // The symmetric kernels state (built on previous)
+  // symmetric buffer
+  uint8_t* baseUCSymPtr;
+  uint8_t* baseMCSymPtr;
+  size_t baseStride;
+  size_t symAllocHead;
+  CUmemGenericAllocationHandle symMCHandle;
+  struct ncclIntruQueue<struct ncclSymRegTask, &ncclSymRegTask::next> symRegTaskQueue;
 
+  // Unroll factor for comm [RCCL]
+  int unroll;
+  // custom collective [RCCL]
+  bool enableCustColl;
+  
   uint64_t endMagic;
 };
 
