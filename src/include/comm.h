@@ -739,12 +739,19 @@ struct ncclComm {
   size_t baseStride;
   size_t symAllocHead;
   CUmemGenericAllocationHandle symMCHandle;
-  struct ncclIntruQueue<struct ncclSymRegTask, &ncclSymRegTask::next> symRegTaskQueue;
+  //struct ncclIntruQueue<struct ncclSymRegTask, &ncclSymRegTask::next> symRegTaskQueue;
 
   // Unroll factor for comm [RCCL]
   int unroll;
   // custom collective [RCCL]
   bool enableCustColl;
+  // gfx name from hipDeviceProp_t [RCCL]
+  char* archName;
+  // multiProcessorCount from hipDeviceProp_t [RCCL]
+  int cuCount;
+
+  struct ncclDevrState devrState; // The symmetric runtime state
+  struct ncclSymkState symkState; // The symmetric kernels state (built on previous)
   
   uint64_t endMagic;
 };

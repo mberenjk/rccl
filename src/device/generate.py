@@ -616,8 +616,8 @@ for name in name_to_funcs.keys():
         out("#if %s\n" % guard)
       out(
         "DEFINE_ncclDevFunc({sym}, ncclFunc{coll}, {redop_cxx}, {ty_cxx}, NCCL_ALGO_{algo}, NCCL_PROTO_{proto}, {acc}, {pipeline}, {unroll})\n"
-        .format(sym=sym, coll=fn.fn.coll, redop_cxx=redop_to_cxx[fn.fn.redop], ty_cxx=ty_to_cxx[fn.fn.ty],
-                algo=(fn.fn.algo or "RING"), proto=(fn.fn.proto or "SIMPLE"), acc=fn.fn.acc, pipeline=fn.fn.pipeline, unroll=fn.fn.unroll)
+        .format(sym=sym, coll=fn.coll, redop_cxx=redop_to_cxx[fn.redop], ty_cxx=ty_to_cxx[fn.ty],
+                algo=(fn.algo or "RING"), proto=(fn.proto or "SIMPLE"), acc=fn.acc, pipeline=fn.pipeline, unroll=fn.unroll)
       )
       if guard: 
         out("#endif\n")
