@@ -54,7 +54,7 @@ constexpr const char* rcclCallStr[]
   "AllReduceWithBias",
   "Send",
   "Recv",
-  "AllToAll",
+  "AlltoAll",
   "AllToAllv",
   "Gather",
   "Scatter",

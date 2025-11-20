@@ -25,7 +25,7 @@
 #define NVTX_SID_CommAbort            3 // same schema as NVTX_SID_CommInitRank
 #define NVTX_SID_AllGather            4
 #define NVTX_SID_AllReduce            5
-#define NVTX_SID_AlltoAll             6
+#define NVTX_SID_AllToAll             6
 #define NVTX_SID_AllToAllv            7
 #define NVTX_SID_Broadcast            8
 #define NVTX_SID_Gather               9

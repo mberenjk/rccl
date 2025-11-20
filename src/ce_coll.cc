@@ -88,7 +88,7 @@ bool ncclCeImplemented(ncclFunc_t coll, int/*ncclDevRedOp_t*/ red, ncclDataType_
   if (driverVersion >= 12050) {
     switch (coll) {
     case ncclFuncAllGather:
-    case ncclFuncAlltoAll:
+    case ncclFuncAllToAllPivot :
     case ncclFuncScatter:
     case ncclFuncGather:
       return true;
@@ -99,7 +99,7 @@ bool ncclCeImplemented(ncclFunc_t coll, int/*ncclDevRedOp_t*/ red, ncclDataType_
 #else
   switch (coll) {
     case ncclFuncAllGather:
-    case ncclFuncAlltoAll:
+    case ncclFuncAllToAllPivot :
     case ncclFuncScatter:
     case ncclFuncGather:
       return true;
@@ -611,7 +611,7 @@ ncclResult_t ncclLaunchCeColl(struct ncclComm* comm, struct ncclKernelPlan* plan
     case ncclFuncAllGather:
       NCCLCHECKGOTO(ncclCeAllGather(comm, args, stream), ret, fail);
       break;
-    case ncclFuncAlltoAll:
+    case ncclFuncAllToAllPivot :
       NCCLCHECKGOTO(ncclCeAlltoAll(comm, args, stream), ret, fail);
       break;
     case ncclFuncScatter:

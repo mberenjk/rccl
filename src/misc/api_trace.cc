@@ -27,7 +27,7 @@ ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
                    cudaStream_t stream);
 
 ncclResult_t
-ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t count,
+ncclAllToAll_impl(const void* sendbuff, void* recvbuff, size_t count,
                   ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
 
 ncclResult_t
@@ -248,7 +248,7 @@ RcclGetFunctionTable_impl()
         new(m_buffer.data()) rcclApiFuncTable{ sizeof(rcclApiFuncTable),
                                                &ncclAllGather_impl,
                                                &ncclAllReduce_impl,
-                                               &ncclAlltoAll_impl,
+                                               &ncclAllToAll_impl,
                                                &ncclAllToAllv_impl,
                                                &ncclBroadcast_impl,
                                                &ncclGather_impl,
