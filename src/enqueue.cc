@@ -922,281 +922,264 @@ RCCL_PARAM(P2pBatchEnable, "P2P_BATCH_ENABLE", 0); // 64k
 // match the corresponding values for this round of the p2p schedule (no -1's).
 // No-op's are encoded with a -1 size.
 static ncclResult_t addP2pToPlan(
-    struct ncclComm* comm, struct ncclKernelPlan* plan,
-    int nChannelsMin, int nChannelsMax, int p2pRound,
-    int sendRank, void* sendAddr, ssize_t sendBytes,
-    int recvRank, void* recvAddr, ssize_t recvBytes,
-    uint64_t sendOpCount, uint64_t recvOpCount,
-    const int planTotalTasks[], struct ncclTaskP2p** p2pTasks
-  ) {
-  ncclResult_t ret = ncclSuccess;
-  int connIndex[2] = {1, 1};
-  bool selfSend = (sendRank == comm->rank);
-  // recv: dir=0, send: dir=1
-  void* addrs[2] = {recvAddr, sendAddr};
-  ssize_t bytes[2] = {recvBytes, sendBytes};
-  bool protoLL[2] = {!selfSend, !selfSend};
-  bool network[2] = {false, false};
-  bool proxySameProcess[2] = {true, true};
-  void** handles[2] = {NULL, NULL};
-  auto batchP2PEnableEnv = rcclParamP2pBatchEnable();
-  auto p2pBatchThreshold = rcclParamP2pBatchThreshold();
-  bool belowThreshold = (recvBytes <= p2pBatchThreshold) && (sendBytes <= p2pBatchThreshold);
-  bool batchP2P =  batchP2PEnableEnv && (sendBytes == recvBytes) && belowThreshold;
+  struct ncclComm* comm, struct ncclKernelPlan* plan,
+  int nChannelsMin, int nChannelsMax, int p2pRound,
+  int sendRank, void* sendAddr, ssize_t sendBytes,
+  int recvRank, void* recvAddr, ssize_t recvBytes,
+  uint64_t sendOpCount, uint64_t recvOpCount,
+  struct ncclTaskP2p** p2pTasks
+) {
+int connIndex[2] = {1, 1};
+bool selfSend = (sendRank == comm->rank);
+// recv: dir=0, send: dir=1
+void* addrs[2] = {recvAddr, sendAddr};
+ssize_t bytes[2] = {recvBytes, sendBytes};
+bool protoLL[2] = {!selfSend, !selfSend};
+bool network[2] = {false, false};
+bool proxySameProcess[2] = {true, true};
+void** handles[2] = {NULL, NULL};
+auto batchP2PEnableEnv = rcclParamP2pBatchEnable();
+auto p2pBatchThreshold = rcclParamP2pBatchThreshold();
+bool belowThreshold = (recvBytes <= p2pBatchThreshold) && (sendBytes <= p2pBatchThreshold);
+bool batchP2P =  batchP2PEnableEnv && (sendBytes == recvBytes) && belowThreshold;
 
-  //ncclP2pChannelBaseForRound now computes channel-base based on batching enablement (env. variable RCCL_P2P_BATCH_ENABLE=1)
-  //but batching is only applicable if msg size is below threshold which is not checked below
-  //this causes perf. dips in some cases but also boosts in other cases even when no batching happens because msg size is above threshold
-  //replacing line below with ncclP2pChannelBaseForRound(comm, p2pRound, batchP2P) can cause issues due to ncclP2pChannelBaseForRound calling the same routine
-  //channel base computed in taskAppend and here must be the same, but in taskAppend the call happens once and is cached for later usage, which is why it wouldn't be consistent with the call below
-  uint8_t base = ncclP2pChannelBaseForRound(comm, p2pRound, batchP2PEnableEnv);
-  if (comm->p2pNet) {
-    for (int dir = 0; dir <= 1; dir++) {
-      if (bytes[dir] > rcclParamP2pNetThreshold())
-        connIndex[dir] = NCCL_CONN_IDX_P2P_NET;
+//ncclP2pChannelBaseForRound now computes channel-base based on batching enablement (env. variable RCCL_P2P_BATCH_ENABLE=1)
+//but batching is only applicable if msg size is below threshold which is not checked below
+//this causes perf. dips in some cases but also boosts in other cases even when no batching happens because msg size is above threshold
+//replacing line below with ncclP2pChannelBaseForRound(comm, p2pRound, batchP2P) can cause issues due to ncclP2pChannelBaseForRound calling the same routine
+//channel base computed in taskAppend and here must be the same, but in taskAppend the call happens once and is cached for later usage, which is why it wouldn't be consistent with the call below
+uint8_t base = ncclP2pChannelBaseForRound(comm, p2pRound, batchP2PEnableEnv);
+if (comm->p2pNet) {
+  for (int dir = 0; dir <= 1; dir++) {
+    if (bytes[dir] > rcclParamP2pNetThreshold())
+      connIndex[dir] = NCCL_CONN_IDX_P2P_NET;
+  }
+}
+
+if (!selfSend) {
+  for (int part=0; part < nChannelsMax; part++) {
+    int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, part, nChannelsMax, comm->nNodes);
+    struct ncclChannelPeer** channelPeers = comm->channels[channelId].peers;
+    for (int dir=0; dir <= 1; dir++) {
+      int peerRank = dir ? sendRank : recvRank;
+      struct ncclConnector* conn = dir ? &channelPeers[peerRank]->send[connIndex[dir]]
+                                       : &channelPeers[peerRank]->recv[connIndex[dir]];
+      protoLL[dir] &= conn->conn.buffs[NCCL_PROTO_LL] != nullptr && !IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx12");
+      network[dir] |= conn->transportComm == (dir ? &netTransport.send : &netTransport.recv);
+      proxySameProcess[dir] &= conn->proxyConn.sameProcess;
     }
   }
+}
 
-  struct ncclProxyOp proxyOps[2] = {};
-  int nProxyOps = selfSend ? 0 : 2;
-  if (!selfSend) {
-    for (int part=0; part < nChannelsMax; part++) {
-      int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, part, nChannelsMax, comm->nNodes);
-      struct ncclChannelPeer** channelPeers = comm->channels[channelId].peers;
-      for (int dir=0; dir <= 1; dir++) {
+ssize_t thresholdLL = nChannelsMax*ncclParamP2pLLThreshold();
+ssize_t paramChunkSize = ncclParamChunkSize();
+// Arrays indexed by dir where recv=0, send=1:
+int nChannels[2];
+int protocol[2];
+int stepSize[2];
+int chunkSize[2];
+int chunkDataSize[2];
+int chunkDataSize_u32fp8[2];
+bool netRegistered[2] = {false, false};
+bool ipcRegistered[2] = {false, false};
+
+for (int dir=0; dir < 2; dir++) { // 0=recv, 1=send
+  if (bytes[dir] != -1) protoLL[dir] &= bytes[dir] <= thresholdLL;
+  protocol[dir] = protoLL[dir] ? NCCL_PROTO_LL : NCCL_PROTO_SIMPLE;
+
+  stepSize[dir] = comm->buffSizes[protocol[dir]]/NCCL_STEPS;
+  if (protocol[dir] == NCCL_PROTO_SIMPLE) stepSize[dir] = comm->p2pChunkSize;
+  chunkSize[dir] = stepSize[dir];
+  if (paramChunkSize != 0) {
+    chunkSize[dir] = paramChunkSize;
+  } else if (network[dir]) {
+    // Tune chunk size for the network
+    if (protocol[dir] == NCCL_PROTO_SIMPLE && bytes[dir] < stepSize[dir]) chunkSize[dir] /= 4;
+    else if (bytes[dir] < 8*stepSize[dir]) chunkSize[dir] /= 2;
+  }
+
+  chunkDataSize[dir] = chunkSize[dir];
+  if (protocol[dir] == NCCL_PROTO_LL) chunkDataSize[dir] /= 2;
+  chunkDataSize_u32fp8[dir] = u32fp8Encode(chunkDataSize[dir]);
+  chunkDataSize[dir] = u32fp8Decode(chunkDataSize_u32fp8[dir]);
+  chunkSize[dir] = chunkDataSize[dir];
+  if (protocol[dir] == NCCL_PROTO_LL) chunkSize[dir] *= 2;
+
+  if (network[dir]) {
+    bool pxnUsed = !ncclPxnDisable(comm) && comm->isAllNvlink && comm->maxLocalRanks > 1;
+    if (bytes[dir] > 0 && proxySameProcess[dir] && protocol[dir] == NCCL_PROTO_SIMPLE && (!pxnUsed)) {
+      int regFlag = 0;
+      NCCLCHECK(ncclCalloc(&handles[dir], nChannelsMax));
+      for (int part = 0; part < nChannelsMax; part++) {
+        int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, part, nChannelsMax, comm->nNodes);
+        struct ncclChannelPeer** channelPeers = comm->channels[channelId].peers;
         int peerRank = dir ? sendRank : recvRank;
         struct ncclConnector* conn = dir ? &channelPeers[peerRank]->send[connIndex[dir]]
-                                         : &channelPeers[peerRank]->recv[connIndex[dir]];
-        protoLL[dir] &= conn->conn.buffs[NCCL_PROTO_LL] != nullptr && !IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx12");
-        network[dir] |= conn->transportComm == (dir ? &netTransport.send : &netTransport.recv);
-        proxySameProcess[dir] &= conn->proxyConn.sameProcess;
+          : &channelPeers[peerRank]->recv[connIndex[dir]];
+        if (conn->conn.flags & NCCL_DIRECT_NIC)
+          ncclRegisterP2pNetBuffer(comm, addrs[dir], bytes[dir], conn, &regFlag, &handles[dir][part], &plan->cleanupQueue);
+        if (!regFlag) break;
+      }
+      netRegistered[dir] = regFlag ? true : false;
+    }
+  } else if (bytes[dir] > 0 && addrs[dir] && protocol[dir] == NCCL_PROTO_SIMPLE && !selfSend) {
+    int peerRank = dir ? sendRank : recvRank;
+    int regFlag = 0;
+    int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, 0, nChannelsMax, comm->nNodes);
+    struct ncclChannelPeer** channelPeers = comm->channels[channelId].peers;
+    struct ncclConnector* conn = dir ? &channelPeers[peerRank]->send[connIndex[dir]]
+      : &channelPeers[peerRank]->recv[connIndex[dir]];
+    void* regAddr = NULL;
+    if (conn->conn.flags & (NCCL_P2P_WRITE | NCCL_P2P_READ)) {
+      // We require users registering buffers on both sides
+      NCCLCHECK(ncclRegisterP2pIpcBuffer(comm, addrs[dir], bytes[dir], peerRank, &regFlag, &regAddr, &plan->cleanupQueue));
+      if (regFlag) {
+        if (dir == 0 && (conn->conn.flags & NCCL_P2P_WRITE)) recvAddr = regAddr;
+        else if (dir == 1 && (conn->conn.flags & NCCL_P2P_READ)) sendAddr = regAddr;
       }
     }
+    ipcRegistered[dir] = regFlag ? true : false;
   }
 
-  ssize_t thresholdLL = nChannelsMax*ncclParamP2pLLThreshold();
-  ssize_t paramChunkSize = ncclParamChunkSize();
-  // Arrays indexed by dir where recv=0, send=1:
-  int nChannels[2];
-  int protocol[2];
-  int stepSize[2];
-  int chunkSize[2];
-  int chunkDataSize[2];
-  int chunkDataSize_u32fp8[2];
-  bool netRegistered[2] = {false, false};
-  bool ipcRegistered[2] = {false, false};
-
-  for (int dir=0; dir < 2; dir++) { // 0=recv, 1=send
-    if (bytes[dir] != -1) protoLL[dir] &= bytes[dir] <= thresholdLL;
-    protocol[dir] = protoLL[dir] ? NCCL_PROTO_LL : NCCL_PROTO_SIMPLE;
-
-    stepSize[dir] = comm->buffSizes[protocol[dir]]/NCCL_STEPS;
-    if (protocol[dir] == NCCL_PROTO_SIMPLE) stepSize[dir] = comm->p2pChunkSize;
-    chunkSize[dir] = stepSize[dir];
-    if (paramChunkSize != 0) {
-      chunkSize[dir] = paramChunkSize;
-    } else if (network[dir]) {
-      // Tune chunk size for the network
-      if (protocol[dir] == NCCL_PROTO_SIMPLE && bytes[dir] < stepSize[dir]) chunkSize[dir] /= 4;
-      else if (bytes[dir] < 8*stepSize[dir]) chunkSize[dir] /= 2;
-    }
-
-    chunkDataSize[dir] = chunkSize[dir];
-    if (protocol[dir] == NCCL_PROTO_LL) chunkDataSize[dir] /= 2;
-    chunkDataSize_u32fp8[dir] = u32fp8Encode(chunkDataSize[dir]);
-    chunkDataSize[dir] = u32fp8Decode(chunkDataSize_u32fp8[dir]);
-    chunkSize[dir] = chunkDataSize[dir];
-    if (protocol[dir] == NCCL_PROTO_LL) chunkSize[dir] *= 2;
-
-    if (network[dir]) {
-      bool pxnUsed = !ncclPxnDisable(comm) && comm->isAllNvlink && comm->maxLocalRanks > 1;
-      if (bytes[dir] > 0 && proxySameProcess[dir] && protocol[dir] == NCCL_PROTO_SIMPLE && (!pxnUsed)) {
-        int regFlag = 0;
-        NCCLCHECKGOTO(ncclCalloc(&handles[dir], nChannelsMax), ret, cleanup);
-        for (int part = 0; part < nChannelsMax; part++) {
-          int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, part, nChannelsMax, comm->nNodes);
-          struct ncclChannelPeer** channelPeers = comm->channels[channelId].peers;
-          int peerRank = dir ? sendRank : recvRank;
-          struct ncclConnector* conn = dir ? &channelPeers[peerRank]->send[connIndex[dir]]
-            : &channelPeers[peerRank]->recv[connIndex[dir]];
-          if (conn->conn.flags & NCCL_DIRECT_NIC)
-            ncclRegisterP2pNetBuffer(comm, addrs[dir], bytes[dir], conn, &regFlag, &handles[dir][part], &plan->cleanupQueue);
-          if (!regFlag) break;
-        }
-        netRegistered[dir] = regFlag ? true : false;
-      }
-    } else if (bytes[dir] > 0 && addrs[dir] && protocol[dir] == NCCL_PROTO_SIMPLE && !selfSend) {
-      int peerRank = dir ? sendRank : recvRank;
-      int regFlag = 0;
-      int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, 0, nChannelsMax, comm->nNodes);
-      struct ncclChannelPeer** channelPeers = comm->channels[channelId].peers;
-      struct ncclConnector* conn = dir ? &channelPeers[peerRank]->send[connIndex[dir]]
-        : &channelPeers[peerRank]->recv[connIndex[dir]];
-      void* regAddr = NULL;
-      if (conn->conn.flags & (NCCL_P2P_WRITE | NCCL_P2P_READ)) {
-        // We require users registering buffers on both sides
-        NCCLCHECKGOTO(ncclRegisterP2pIpcBuffer(comm, addrs[dir], bytes[dir], peerRank, &regFlag, &regAddr, &plan->cleanupQueue), ret, cleanup);
-        if (regFlag) {
-          if (dir == 0 && (conn->conn.flags & NCCL_P2P_WRITE)) recvAddr = regAddr;
-          else if (dir == 1 && (conn->conn.flags & NCCL_P2P_READ)) sendAddr = regAddr;
-        }
-      }
-      ipcRegistered[dir] = regFlag ? true : false;
-    }
-
-    if (bytes[dir] == -1) nChannels[dir] = 0;
-    else if (bytes[dir] == 0) nChannels[dir] = 1;
-    else {
-      ssize_t minPartSize = comm->nNodes > 1 ? stepSize[dir]/2 : stepSize[dir]/8;
-      ssize_t maxPartSize = comm->nNodes > 1 ? stepSize[dir]   : stepSize[dir]*32;
-      nChannels[dir] = std::min<int>(nChannelsMin, divUp(bytes[dir], minPartSize));
-      size_t partSize = std::max(minPartSize, divUp(bytes[dir], nChannels[dir]));
-      while (partSize > maxPartSize && nChannels[dir] <= nChannelsMax/2) {
-        nChannels[dir] *= 2;
-        partSize = divUp(bytes[dir], nChannels[dir]);
-      }
-    }
-    // Update number of channels propagated to the profiler
-    if (p2pTasks[dir]) p2pTasks[dir]->nChannels = nChannels[dir];
-  }
-
-  struct ncclWorkList* workNode;
-  workNode = ncclMemoryStackAllocInlineArray<ncclWorkList, ncclDevWorkP2p>(&comm->memScoped, 1);
-  workNode->workType = ncclDevWorkTypeP2p;
-  workNode->size = sizeof(struct ncclDevWorkP2p);
-  ncclIntruQueueEnqueue(&plan->workQueue, workNode);
-  uint32_t workOffset;
-  workOffset = plan->workBytes;
-  plan->workBytes += sizeof(struct ncclDevWorkP2p);
-
-  struct ncclDevWorkP2p* work;
-  work = (struct ncclDevWorkP2p*)(workNode+1);
-  work->nP2pChannels = comm->p2pnChannels;
-  work->channelBase = base;
-  work->nSendChannels = nChannels[1];
-  work->sendProtoLL = protoLL[1];
-  work->sendNetReg = netRegistered[1];
-  work->sendIpcReg = ipcRegistered[1];
-  work->sendChunkSize_u32fp8 = chunkDataSize_u32fp8[1];
-  work->sendRank = sendRank;
-  work->sendAddr = sendAddr;
-  work->sendBytes = sendBytes==-1 ? 0 : sendBytes;
-  work->sendConnIndex = connIndex[1];
-  work->sendOpCount = sendOpCount;
-  work->nRecvChannels = nChannels[0];
-  work->recvProtoLL = protoLL[0];
-  work->recvNetReg = netRegistered[0];
-  work->recvIpcReg = ipcRegistered[0];
-  work->recvChunkSize_u32fp8 = chunkDataSize_u32fp8[0];
-  work->recvRank = recvRank;
-  work->recvAddr = recvAddr;
-  work->recvBytes = recvBytes==-1 ? 0 : recvBytes;
-  work->profilerEnabled = ncclProfilerPluginLoaded() && ((p2pTasks[0] ? p2pTasks[0] : p2pTasks[1])->eActivationMask & ncclProfileKernelCh);
-  work->recvConnIndex = connIndex[0];
-  work->recvOpCount = recvOpCount;
-
-  for (int dir=0; dir < nProxyOps; dir++) {
-    struct ncclProxyOp* op = &proxyOps[dir];
-    op->root = dir ? sendRank : recvRank;
-    op->sliceSteps = 1;
-    op->chunkSteps = 1;
-    op->dtype = ncclInt8;
-    op->redOp = ncclSum;
-    op->protocol = protocol[dir];
-    op->pattern = dir ? ncclPatternSend : ncclPatternRecv;
-    op->chunkSize = chunkSize[dir];
-    op->reg = netRegistered[dir];
-    op->coll = p2pTasks[dir] ? p2pTasks[dir]->func : 0;
-    op->collAPI = p2pTasks[dir] ? p2pTasks[dir]->collAPI : 0;
-    op->task.p2p = p2pTasks[dir];
-    op->rank = comm->rank;
-    op->eActivationMask = p2pTasks[dir] ? p2pTasks[dir]->eActivationMask : 0;
-    op->connIndex = connIndex[dir];
-    if (rcclParamEnableProxyTrace()) {
-      op->coll =  dir ? ncclFuncSend : ncclFuncRecv;
-    }
-    // The following are modified per channel part in addWorkToChannels():
-    // op->buffer, op->nbytes, op->nsteps = ...;
-  }
-
-  nChannelsMax = std::max(nChannels[0], nChannels[1]);
-  // Determine how many peers this plan will target concurrently. Make a
-  // simplifying assumption that each task targets a different peer.
-  // Each task is striped across 'nChannelsMax' of 'p2pnChannels' channels.
-  // Each channel runs up to NCCL_MAX_DEV_WORK_P2P_PER_BATCH tasks concurrently.
-  int maxConcurrent;
-  int concurrentTasks[2];
-  maxConcurrent = comm->p2pnChannels / nChannelsMax * NCCL_MAX_DEV_WORK_P2P_PER_BATCH;
-  concurrentTasks[0] = std::min(planTotalTasks[0], maxConcurrent);
-  concurrentTasks[1] = std::min(planTotalTasks[1], maxConcurrent);
-  for (int part=0; part < nChannelsMax; part++) {
-    int incWorkCounter = -1;
-    int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, part, comm->p2pnChannelsPerPeer, comm->nNodes);
-    plan->channelMask.masks[channelId/64] |= uint64_t(1)<<(channelId%64);
-    // Add batch first.
-    int funcIdx = ncclDevFuncId_P2p();
-    addWorkBatchToPlan(comm, plan, channelId, ncclDevWorkTypeP2p, funcIdx, workOffset, p2pRound, batchP2P);
-    if (funcIdx < 0) {
-      WARN("%s: unsupported collective. Please ensure the collective has been enabled in build.", __func__);
-      return ncclInvalidUsage;
-    }
-    // Add proxy ops.
-    for (int dir=0; dir < nProxyOps; dir++) {
-      // Partition steps across channels.
-      int nParts = dir ? work->nSendChannels : work->nRecvChannels;
-      void* addr = dir ? work->sendAddr : work->recvAddr;
-      size_t bytes = dir ? work->sendBytes : work->recvBytes;
-      if (rcclParamEnableProxyTrace()) {
-        proxyOps[dir].totalBytes = bytes;
-      }
-      proxyOps[dir].recvbuff = nullptr;
-      if (nParts <= part) {
-        proxyOps[dir].nsteps = 0;
-      } else if (bytes == 0) {
-        proxyOps[dir].nsteps = 1;
-        proxyOps[dir].nbytes = 0;
-      } else {
-        size_t chunkDataSize = u32fp8Decode(dir ? work->sendChunkSize_u32fp8 : work->recvChunkSize_u32fp8);
-        size_t partBeg, partEnd;
-        ncclP2pPartBounds(nParts, part, bytes, &partBeg, &partEnd);
-        if (proxyOps[dir].reg) {
-          (dir ? proxyOps[dir].sendbuff : proxyOps[dir].recvbuff) = (uint8_t*)addr + partBeg;
-          (dir ? proxyOps[dir].sendMhandle : proxyOps[dir].recvMhandle) = handles[dir][part];
-          proxyOps[dir].nbytes = partEnd - partBeg;
-          proxyOps[dir].nsteps = DIVUP(proxyOps[dir].nbytes, NCCL_MAX_NET_SIZE);
-        } else {
-          proxyOps[dir].nsteps = divUp(partEnd-partBeg, chunkDataSize);
-          proxyOps[dir].nbytes = std::min(partEnd-partBeg, chunkDataSize);
-        }
-        if (proxyOps[dir].protocol == NCCL_PROTO_LL) {
-          proxyOps[dir].nbytes *= 2;
-          proxyOps[dir].nbytes = roundUp(proxyOps[dir].nbytes, sizeof(union ncclLLFifoLine));
-        }
-      }
-
-      // Increment work counter for <send, recv> pair rather than individual p2p
-      if (proxyOps[dir].nsteps && incWorkCounter < 0) {
-        proxyOps[dir].incWorkCounter = true;
-        incWorkCounter = dir;
-      }
-
-      if (proxyOps[dir].nsteps != 0) {
-        // Calculate the opCount after adding batch since then the batch count will
-        // equal one plus the batch index this p2p settled in.
-        proxyOps[dir].channelId = channelId;
-        proxyOps[dir].opCount = uint64_t(comm->planner.wipPlan.channels[channelId].nWorkBatchesP2p)<<1 | 1;
-        proxyOps[dir].nChannels = nChannels[dir];
-        proxyOps[dir].nPeers = concurrentTasks[dir];
-        NCCLCHECKGOTO(addProxyOpIfNeeded(comm, plan, &proxyOps[dir]), ret, cleanup);
-        NCCLCHECKGOTO(addProfilerProxyOpIfNeeded(comm, plan, &proxyOps[dir]), ret, cleanup);
-      }
+  if (bytes[dir] == -1) nChannels[dir] = 0;
+  else if (bytes[dir] == 0) nChannels[dir] = 1;
+  else {
+    ssize_t minPartSize = comm->nNodes > 1 ? stepSize[dir]/2 : stepSize[dir]/8;
+    ssize_t maxPartSize = comm->nNodes > 1 ? stepSize[dir]   : stepSize[dir]*32;
+    nChannels[dir] = std::min<int>(nChannelsMin, divUp(bytes[dir], minPartSize));
+    size_t partSize = std::max(minPartSize, divUp(bytes[dir], nChannels[dir]));
+    while (partSize > maxPartSize && nChannels[dir] <= nChannelsMax/2) {
+      nChannels[dir] *= 2;
+      partSize = divUp(bytes[dir], nChannels[dir]);
     }
   }
-cleanup:
-  free(handles[0]);
-  free(handles[1]);
-  return ret;
+  // Update number of channels propagated to the profiler
+  if (p2pTasks[dir]) p2pTasks[dir]->nChannels = nChannels[dir];
 }
+
+struct ncclWorkList* workNode = ncclMemoryStackAllocInlineArray<ncclWorkList, ncclDevWorkP2p>(&comm->memScoped, 1);
+workNode->workType = ncclDevWorkTypeP2p;
+workNode->size = sizeof(struct ncclDevWorkP2p);
+ncclIntruQueueEnqueue(&plan->workQueue, workNode);
+uint32_t workOffset = plan->workBytes;
+plan->workBytes += sizeof(struct ncclDevWorkP2p);
+
+struct ncclDevWorkP2p* work = (struct ncclDevWorkP2p*)(workNode+1);
+work->nP2pChannels = comm->p2pnChannels;
+work->channelBase = base;
+work->nSendChannels = nChannels[1];
+work->sendProtoLL = protoLL[1];
+work->sendNetReg = netRegistered[1];
+work->sendIpcReg = ipcRegistered[1];
+work->sendChunkSize_u32fp8 = chunkDataSize_u32fp8[1];
+work->sendRank = sendRank;
+work->sendAddr = sendAddr;
+work->sendBytes = sendBytes==-1 ? 0 : sendBytes;
+work->sendConnIndex = connIndex[1];
+work->sendOpCount = sendOpCount;
+work->nRecvChannels = nChannels[0];
+work->recvProtoLL = protoLL[0];
+work->recvNetReg = netRegistered[0];
+work->recvIpcReg = ipcRegistered[0];
+work->recvChunkSize_u32fp8 = chunkDataSize_u32fp8[0];
+work->recvRank = recvRank;
+work->recvAddr = recvAddr;
+work->recvBytes = recvBytes==-1 ? 0 : recvBytes;
+work->profilerEnabled = ncclProfilerPluginLoaded() && ((p2pTasks[0] ? p2pTasks[0] : p2pTasks[1])->eActivationMask & ncclProfileKernelCh);
+work->recvConnIndex = connIndex[0];
+work->recvOpCount = recvOpCount;
+
+struct ncclProxyOp proxyOps[2] = {};
+int nProxyOps = selfSend ? 0 : 2;
+for (int dir=0; dir < nProxyOps; dir++) {
+  struct ncclProxyOp* op = &proxyOps[dir];
+  op->root = dir ? sendRank : recvRank;
+  op->sliceSteps = 1;
+  op->chunkSteps = 1;
+  op->dtype = ncclInt8;
+  op->redOp = ncclSum;
+  op->protocol = protocol[dir];
+  op->pattern = dir ? ncclPatternSend : ncclPatternRecv;
+  op->chunkSize = chunkSize[dir];
+  op->reg = netRegistered[dir];
+  op->coll = p2pTasks[dir] ? p2pTasks[dir]->func : 0;
+  op->task.p2p = p2pTasks[dir];
+  op->rank = comm->rank;
+  op->eActivationMask = p2pTasks[dir] ? p2pTasks[dir]->eActivationMask : 0;
+  op->connIndex = connIndex[dir];
+  if (rcclParamEnableProxyTrace()) {
+    op->coll =  dir ? ncclFuncSend : ncclFuncRecv;
+  }
+  // The following are modified per channel part in addWorkToChannels():
+  // op->buffer, op->nbytes, op->nsteps = ...;
+}
+
+nChannelsMax = std::max(nChannels[0], nChannels[1]);
+for (int part=0; part < nChannelsMax; part++) {
+  int incWorkCounter = -1;
+  int channelId = ncclP2pChannelForPart(comm->p2pnChannels, base, part, comm->p2pnChannelsPerPeer, comm->nNodes);
+  plan->channelMask.masks[channelId/64] |= uint64_t(1)<<(channelId%64);
+  // Add batch first.
+  int funcIdx = ncclDevFuncId_P2p();
+  addWorkBatchToPlan(comm, plan, channelId, ncclDevWorkTypeP2p, funcIdx, workOffset, p2pRound, batchP2P);
+  if (funcIdx < 0) {
+    WARN("%s: unsupported collective. Please ensure the collective has been enabled in build.", __func__);
+    return ncclInvalidUsage;
+  }
+  // Add proxy ops.
+  for (int dir=0; dir < nProxyOps; dir++) {
+    // Partition steps across channels.
+    int nParts = dir ? work->nSendChannels : work->nRecvChannels;
+    void* addr = dir ? work->sendAddr : work->recvAddr;
+    size_t bytes = dir ? work->sendBytes : work->recvBytes;
+    if (rcclParamEnableProxyTrace()) {
+      proxyOps[dir].totalBytes = bytes;
+    }
+    proxyOps[dir].recvbuff = nullptr;
+    if (nParts <= part) {
+      proxyOps[dir].nsteps = 0;
+    } else if (bytes == 0) {
+      proxyOps[dir].nsteps = 1;
+      proxyOps[dir].nbytes = 0;
+    } else {
+      size_t chunkDataSize = u32fp8Decode(dir ? work->sendChunkSize_u32fp8 : work->recvChunkSize_u32fp8);
+      size_t partBeg, partEnd;
+      ncclP2pPartBounds(nParts, part, bytes, &partBeg, &partEnd);
+      if (proxyOps[dir].reg) {
+        (dir ? proxyOps[dir].sendbuff : proxyOps[dir].recvbuff) = (uint8_t*)addr + partBeg;
+        (dir ? proxyOps[dir].sendMhandle : proxyOps[dir].recvMhandle) = handles[dir][part];
+        proxyOps[dir].nbytes = partEnd - partBeg;
+        proxyOps[dir].nsteps = DIVUP(proxyOps[dir].nbytes, NCCL_MAX_NET_SIZE);
+      } else {
+        proxyOps[dir].nsteps = divUp(partEnd-partBeg, chunkDataSize);
+        proxyOps[dir].nbytes = std::min(partEnd-partBeg, chunkDataSize);
+      }
+      if (proxyOps[dir].protocol == NCCL_PROTO_LL) {
+        proxyOps[dir].nbytes *= 2;
+        proxyOps[dir].nbytes = roundUp(proxyOps[dir].nbytes, sizeof(union ncclLLFifoLine));
+      }
+    }
+
+    // Increment work counter for <send, recv> pair rather than individual p2p
+    if (proxyOps[dir].nsteps && incWorkCounter < 0) {
+      proxyOps[dir].incWorkCounter = true;
+      incWorkCounter = dir;
+    }
+
+    if (proxyOps[dir].nsteps != 0) {
+      // Calculate the opCount after adding batch since then the batch count will
+      // equal one plus the batch index this p2p settled in.
+      proxyOps[dir].channelId = channelId;
+      proxyOps[dir].opCount = uint64_t(comm->planner.wipPlan.channels[channelId].nWorkBatchesP2p)<<1 | 1;
+      NCCLCHECK(addProxyOpIfNeeded(comm, plan, &proxyOps[dir]));
+      NCCLCHECK(addProfilerProxyOpIfNeeded(comm, plan, &proxyOps[dir]));
+    }
+  }
+}
+
+return ncclSuccess;
+}
+
 
 static int calcP2pChannelCount(size_t totalSize, int minChannels, int maxChannels, size_t minSize, size_t maxSize) {
   size_t size = std::max(minSize, divUp(totalSize, minChannels));
@@ -1209,88 +1192,78 @@ static int calcP2pChannelCount(size_t totalSize, int minChannels, int maxChannel
 }
 
 static ncclResult_t scheduleP2pTasksToPlan(
-    struct ncclComm* comm, struct ncclKernelPlan* plan, struct ncclKernelPlanBudget* budget
-  ) {
-  int nRanks = comm->nRanks;
-  struct ncclKernelPlanner::Peer* peers = comm->planner.peers;
+  struct ncclComm* comm, struct ncclKernelPlan* plan, struct ncclKernelPlanBudget* budget
+) {
+int nRanks = comm->nRanks;
+struct ncclKernelPlanner::Peer* peers = comm->planner.peers;
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
-  plan->threadPerBlock = std::max(plan->threadPerBlock, RCCL_P2P_MAX_NTHREADS);
+plan->threadPerBlock = std::max(plan->threadPerBlock, RCCL_P2P_MAX_NTHREADS);
 #else
-  plan->threadPerBlock = std::max(plan->threadPerBlock, NCCL_MAX_NTHREADS);
+plan->threadPerBlock = std::max(plan->threadPerBlock, NCCL_MAX_NTHREADS);
 #endif
-  if (!plan->kernelSpecialized) {
-    plan->kernelFn = ncclKerns[ncclGetKernelIndex(comm)].kernelFn;
-    plan->kernelSpecialized = ncclKerns[ncclGetKernelIndex(comm)].specialized;
-  }
+if (!plan->kernelSpecialized) {
+  plan->kernelFn = ncclKerns[ncclGetKernelIndex(comm)].kernelFn;
+  plan->kernelSpecialized = ncclKerns[ncclGetKernelIndex(comm)].specialized;
+}
 
-  // Compute how much to split operations
-  // Try to use all channels
-  int nChannelsMax = comm->p2pnChannelsPerPeer;
-  int nChannelsMin = nChannelsMax;
-  // Try to use all channels, but one channel per operation.
-  while (nChannelsMin*nRanks > comm->p2pnChannels && nChannelsMin > 1) nChannelsMin /= 2;
+// Compute how much to split operations
+// Try to use all channels
+int nChannelsMax = comm->p2pnChannelsPerPeer;
+int nChannelsMin = nChannelsMax;
+// Try to use all channels, but one channel per operation.
+while (nChannelsMin*nRanks > comm->p2pnChannels && nChannelsMin > 1) nChannelsMin /= 2;
 
-  // Save the total count of send/recv tasks in the plan
-  int planTotalTasks[2] = {comm->planner.nTasksP2pRecv, comm->planner.nTasksP2pSend};
-  while (comm->planner.nTasksP2p != 0) {
-    for (int round=0; round < nRanks; round++) {
-      int sendRank = comm->p2pSchedule[round].sendRank;
-      int recvRank = comm->p2pSchedule[round].recvRank;
-      struct ncclTaskP2p* send = ncclIntruQueueHead(&peers[sendRank].sendQueue);
-      struct ncclTaskP2p* recv = ncclIntruQueueHead(&peers[recvRank].recvQueue);
-      if (send == nullptr && recv == nullptr) continue;
+while (comm->planner.nTasksP2p != 0) {
+  for (int round=0; round < nRanks; round++) {
+    int sendRank = comm->p2pSchedule[round].sendRank;
+    int recvRank = comm->p2pSchedule[round].recvRank;
+    struct ncclTaskP2p* send = ncclIntruQueueHead(&peers[sendRank].sendQueue);
+    struct ncclTaskP2p* recv = ncclIntruQueueHead(&peers[recvRank].recvQueue);
+    if (send == nullptr && recv == nullptr) continue;
 
-      if (sendRank == comm->rank) {
-        if (send != nullptr && recv == nullptr) {
-          WARN("Trying to send to self without a matching recv");
-          return ncclInvalidUsage;
-        }
-        if (send == nullptr && recv != nullptr) {
-          WARN("Trying to recv to self without a matching send");
-          return ncclInvalidUsage;
-        }
+    if (sendRank == comm->rank) {
+      if (send != nullptr && recv == nullptr) {
+        WARN("Trying to send to self without a matching recv");
+        return ncclInvalidUsage;
       }
-      ssize_t sendBytes = send ? send->bytes : -1;
-      ssize_t recvBytes = recv ? recv->bytes : -1;
-      void* sendBuff = send ? send->buff : nullptr;
-      void* recvBuff = recv ? recv->buff : nullptr;
+      if (send == nullptr && recv != nullptr) {
+        WARN("Trying to recv to self without a matching send");
+        return ncclInvalidUsage;
+      }
+    }
+    ssize_t sendBytes = send ? send->bytes : -1;
+    ssize_t recvBytes = recv ? recv->bytes : -1;
+    void* sendBuff = send ? send->buff : nullptr;
+    void* recvBuff = recv ? recv->buff : nullptr;
 
-      if (sendRank == comm->rank && send->buff == recv->buff) {
-        // Skip send to self in-place (we don't need to support this).
+    if (sendRank == comm->rank && send->buff == recv->buff) {
+      // Skip send to self in-place (we don't need to support this).
+      ncclIntruQueueDequeue(&peers[sendRank].sendQueue);
+      ncclIntruQueueDequeue(&peers[recvRank].recvQueue);
+      ncclMemoryPoolFree(&comm->memPool_ncclTaskP2p, send);
+      ncclMemoryPoolFree(&comm->memPool_ncclTaskP2p, recv);
+      comm->planner.nTasksP2p -= 2;
+    } else {
+      // Ensure room for worst case of one new batch per channel.
+      if (!testBudget(budget, plan->nWorkBatches+nChannelsMax, plan->workBytes + sizeof(struct ncclDevWorkP2p))) {
+        return ncclSuccess;
+      }
+      struct ncclTaskP2p* p2pTasks[2] = { recv, send };
+      NCCLCHECK(addP2pToPlan(comm, plan, nChannelsMin, nChannelsMax, round, sendRank, sendBuff, sendBytes, recvRank, recvBuff, recvBytes, send ? send->opCount : 0, recv ? recv->opCount : 0, p2pTasks));
+      if (send != nullptr) {
         ncclIntruQueueDequeue(&peers[sendRank].sendQueue);
+        ncclIntruQueueEnqueue(&plan->p2pTaskQueue, send);
+        comm->planner.nTasksP2p -= 1;
+      }
+      if (recv != nullptr) {
         ncclIntruQueueDequeue(&peers[recvRank].recvQueue);
-        ncclMemoryPoolFree(&comm->memPool_ncclTaskP2p, send);
-        ncclMemoryPoolFree(&comm->memPool_ncclTaskP2p, recv);
-        comm->planner.nTasksP2p -= 2;
-        comm->planner.nTasksP2pSend -= 1;
-        comm->planner.nTasksP2pRecv -= 1;
-      } else {
-        // Ensure room for worst case of one new batch per channel.
-        if (!testBudget(budget, plan->nWorkBatches+nChannelsMax, plan->workBytes + sizeof(struct ncclDevWorkP2p))) {
-          return ncclSuccess;
-        }
-        struct ncclTaskP2p* p2pTasks[2] = { recv, send };
-        NCCLCHECK(addP2pToPlan(comm, plan, nChannelsMin, nChannelsMax, round, sendRank, sendBuff, sendBytes, recvRank, recvBuff, recvBytes, send ? send->opCount : 0, recv ? recv->opCount : 0, planTotalTasks, p2pTasks));
-        if (send != nullptr) {
-          ncclIntruQueueDequeue(&peers[sendRank].sendQueue);
-          // Profiler - We can overwrite groupAPI event handles here since all operations here belong to the same group
-          plan->groupApiEventHandle = send->groupApiEventHandle;
-          ncclIntruQueueEnqueue(&plan->p2pTaskQueue, send);
-          comm->planner.nTasksP2p -= 1;
-          comm->planner.nTasksP2pSend -= 1;
-        }
-        if (recv != nullptr) {
-          ncclIntruQueueDequeue(&peers[recvRank].recvQueue);
-          // Profiler - We can overwrite groupAPI event handles here since all operations here belong to the same group
-          plan->groupApiEventHandle = recv->groupApiEventHandle;
-          ncclIntruQueueEnqueue(&plan->p2pTaskQueue, recv);
-          comm->planner.nTasksP2p -= 1;
-          comm->planner.nTasksP2pRecv -= 1;
-        }
+        ncclIntruQueueEnqueue(&plan->p2pTaskQueue, recv);
+        comm->planner.nTasksP2p -= 1;
       }
     }
   }
-  return ncclSuccess;
+}
+return ncclSuccess;
 }
 
 // Spin until its safe to increase comm->workFifoProduced to desiredProduced.
