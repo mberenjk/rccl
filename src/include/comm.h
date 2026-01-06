@@ -489,11 +489,6 @@ struct ncclComm {
   struct ncclTopoSystem* topo;
   struct ncclProxyConnector* gproxyConn;
   struct ncclIntruQueue<struct ncclCommCallback, &ncclCommCallback::next> legacyRegCleanupQueue;
-
-  // Unroll factor for comm [RCCL]
-  int unroll;
-  // custom collective [RCCL]
-  bool enableCustColl;
   bool peerInfoValid;
 
   ncclNet_t* ncclNet;

@@ -454,7 +454,6 @@ set(SRC_FILES
   src/bootstrap.cc
   src/ce_coll.cc
   src/channel.cc
-  src/ce_coll.cc
   src/collectives.cc
   src/commDump.cc
   src/debug.cc
@@ -464,7 +463,6 @@ set(SRC_FILES
   src/init.cc
   src/init_nvtx.cc
   src/mnnvl.cc
-  src/include/ce_coll.h
   src/msccl.cc
   src/proxy.cc
   src/rccl_wrap.cc
@@ -472,7 +470,7 @@ set(SRC_FILES
   src/transport.cc
   src/device/all_gather.h
   src/device/all_reduce.h
-  src/device/alltoall.h
+  src/device/alltoall_pivot.h
   src/device/broadcast.h
   src/device/common.h
   src/device/common_kernel.h
@@ -507,7 +505,6 @@ set(SRC_FILES
   src/graph/topo.h
   src/graph/trees.cc
   src/graph/tuning.cc
-  src/dev_runtime.cc
   src/graph/xml.cc
   src/graph/xml.h
   src/include/alloc.h
@@ -531,7 +528,6 @@ set(SRC_FILES
   src/include/debug.h
   src/include/dev_runtime.h
   src/include/device.h
-  src/include/dev_runtime.h
   src/include/enqueue.h
   src/include/gdrwrap.h
   src/include/git_version.h
@@ -898,8 +894,6 @@ target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src)                    # 
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/device)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/device/network/unpack)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include)
-target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/nccl_device)
-target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/device/symmetric)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/mlx5)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/nccl_device)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/plugin)
@@ -1134,8 +1128,6 @@ target_compile_options(rccl PRIVATE -Wall)
 target_compile_options(rccl PRIVATE -Werror=deprecated-copy-with-user-provided-copy)
 target_compile_options(rccl PRIVATE -Wno-format-nonliteral)
 target_compile_options(rccl PRIVATE -Wno-unused-function)
-target_compile_options(rccl PRIVATE -Wno-invalid-offsetof)
-target_compile_options(rccl PRIVATE -Wno-unused-result)
 target_compile_options(rccl PRIVATE -fgpu-rdc)
 
 if(QUIET_WARNINGS)

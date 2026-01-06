@@ -152,7 +152,6 @@ class ncclOptionalNvtxScopedRange
     nvtx3_range__.push(nvtx3_func_attr__); \
   }
 #endif
->>>>>>>>> Temporary merge branch 2
 
 /// @brief Creates an NVTX range with extended payload using the RAII pattern.
 /// @tparam PayloadType Data type of the payload.
