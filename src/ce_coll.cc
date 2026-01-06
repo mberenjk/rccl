@@ -142,7 +142,7 @@ ncclResult_t ncclPrepMCSync(struct ncclComm* comm, bool isComplete, hipStreamBat
   for (int r = 0; r < comm->nRanks; ++r) {
     if (r == comm->rank) continue;
     batchParams[*opIdx] = {};
-    //batchParams[*opIdx].waitValue.operation = HIP_STREAM_MEM_OP_WAIT_VALUE_32;
+    // batchParams[*opIdx].waitValue.operation = CU_STREAM_MEM_OP_WAIT_VALUE_32;
     batchParams[*opIdx].waitValue.address = (CUdeviceptr)(isComplete ? (void*)&completePtrs[r] : (void*)&readyPtrs[r]);
     batchParams[*opIdx].waitValue.value = waitValue;
     batchParams[*opIdx].waitValue.flags = CU_STREAM_WAIT_VALUE_EQ;
@@ -175,10 +175,10 @@ ncclResult_t ncclPrepUCSync(struct ncclComm* comm, bool isComplete,
     size_t offset = (uint8_t*)dstPtr - (uint8_t*)comm->ceColl.ceSyncWin->userPtr;
     NCCLCHECKGOTO(ncclDevrGetLsaRankPtr(comm, comm->ceColl.ceSyncWin, offset, r, &peerDstPtr), ret, fail);
     batchParams[*opIdx] = {};
-    batchParams[*opIdx].writeValue.operation = hipStreamMemOpWriteValue32;
+    // batchParams[*opIdx].writeValue.operation = CU_STREAM_MEM_OP_WRITE_VALUE_32;
     batchParams[*opIdx].writeValue.address  = (CUdeviceptr)peerDstPtr;
     batchParams[*opIdx].writeValue.value = waitValue;
-    //batchParams[*opIdx].writeValue.flags = CU_STREAM_WRITE_VALUE_DEFAULT;
+    // batchParams[*opIdx].writeValue.flags = CU_STREAM_WRITE_VALUE_DEFAULT;
     (*opIdx)++;
   }
 
@@ -186,7 +186,7 @@ ncclResult_t ncclPrepUCSync(struct ncclComm* comm, bool isComplete,
   for (int r = 0; r < comm->nRanks; ++r) {
     if (r == comm->rank) continue;
     batchParams[*opIdx] = {};
-    //batchParams[*opIdx].waitValue.operation = HIP_STREAM_MEM_OP_WAIT_VALUE_32;
+    // batchParams[*opIdx].waitValue.operation = CU_STREAM_MEM_OP_WAIT_VALUE_32;
     batchParams[*opIdx].waitValue.address  = (CUdeviceptr)(isComplete ? (void*)&completePtrs[r] : (void*)&readyPtrs[r]);
     batchParams[*opIdx].waitValue.value = waitValue;
     batchParams[*opIdx].waitValue.flags = CU_STREAM_WAIT_VALUE_EQ;
@@ -225,10 +225,10 @@ ncclResult_t ncclMemOpSync(struct ncclComm* comm, cudaStream_t stream) {
   if (ncclCudaGraphValid(comm->planner.capturingGraph)) {
     for (int i = 0; i < comm->nRanks; i++) {
       batchParams[opIdx] = {};
-      batchParams[opIdx].writeValue.operation = hipStreamMemOpWriteValue32;
+      // batchParams[opIdx].writeValue.operation = CU_STREAM_MEM_OP_WRITE_VALUE_32;
       batchParams[opIdx].writeValue.address = (CUdeviceptr)(comm->ceColl.useCompletePtr ? (void*)&completePtrs[i] : (void*)&readyPtrs[i]);
       batchParams[opIdx].writeValue.value = 0;
-      //batchParams[opIdx].writeValue.flags = CU_STREAM_WRITE_VALUE_DEFAULT;
+      // batchParams[opIdx].writeValue.flags = CU_STREAM_WRITE_VALUE_DEFAULT;
       opIdx++;
     }
   }

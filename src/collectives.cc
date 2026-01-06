@@ -84,7 +84,6 @@ const char* ncclProtoToString(int proto) {
 
 NCCL_API(ncclResult_t, ncclAllGather, const void* sendbuff, void* recvbuff, size_t sendcount,
     ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
-
 ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sendcount,
     ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(AllGather, NcclNvtxParamsAllGather,
@@ -135,10 +134,90 @@ ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sen
   }
 }
 
+RCCL_PARAM(AllToAllPivotEnable, "ALL_TO_ALL_PIVOT_ENABLE", 0);
+
+NCCL_API(ncclResult_t, ncclAlltoAll, const void* sendbuff, void* recvbuff, size_t count,
+    ncclDataType_t datatype, ncclComm* comm, cudaStream_t stream);
+ncclResult_t ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t count,
+    ncclDataType_t datatype, ncclComm* comm, cudaStream_t stream) {
+  NVTX3_FUNC_WITH_PARAMS(AlltoAll, NcclNvtxParamsAlltoAll,
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), datatype));
+  
+  if (!mscclIsCaller()) // when msccl falls back to
+  {
+    NCCLCHECK(Recorder::instance().record(rrAllToAll, sendbuff, recvbuff, count, datatype, comm, stream));
+  }
+
+  if (mscclAvailable(comm) && !mscclIsCaller()) {
+    return mscclEnqueueCheck(
+      sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
+      count, datatype, 0, 0, ncclSum, mscclFuncAllToAll, comm, stream);
+  }
+
+  size_t rankOffset = count * ncclTypeSize(datatype);
+  size_t rankAlign = rankOffset & ((~rankOffset) + 1);
+  struct ncclInfo info;
+  if (comm->topo->pivotA2AEnabled && comm->nChannels >= comm->topo->pivotA2ANumBiRings * 2 &&
+      rankOffset >= 744 * 1024 && rankAlign != 4 && rcclParamAllToAllPivotEnable()) {
+      info = { ncclFuncAlltoAllPivot, "AlltoAllPivot",
+        sendbuff, recvbuff, count, datatype, ncclSum, 0, comm, stream, /* Args */
+        ALLTOALL_PIVOT_CHUNKSTEPS, ALLTOALL_PIVOT_SLICESTEPS, nullptr };
+  } else {
+    info = { ncclFuncAlltoAll, "AlltoAll",
+      sendbuff, recvbuff, count, datatype, ncclSum, 0, comm, stream, /* Args */
+      ALLTOALL_CHUNKSTEPS, ALLTOALL_SLICESTEPS };
+  }
+  return ncclEnqueueCheck(&info);
+}
+
+NCCL_API(ncclResult_t, ncclAlltoAllv, const void *sendbuff, const size_t sendcounts[], const size_t sdispls[],
+    void *recvbuff, const size_t recvcounts[], const size_t rdispls[],
+    ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
+ncclResult_t ncclAlltoAllv_impl(const void *sendbuff, const size_t sendcounts[], const size_t sdispls[],
+    void *recvbuff, const size_t recvcounts[], const size_t rdispls[],
+    ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream) {
+  NVTX3_FUNC_WITH_PARAMS(AlltoAllv, NcclNvtxParamsAlltoAllv,
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, sendcounts[comm->rank] * ncclTypeSize(datatype),
+      recvcounts[comm->rank] * ncclTypeSize(datatype), datatype));
+
+  if (!mscclIsCaller()) // when msccl falls back to
+  {
+    NCCLCHECK(Recorder::instance().record(rrAllToAllv, sendbuff, recvbuff, 0, datatype, comm, stream, -1, sendcounts, sdispls, recvcounts, rdispls));
+  }
+
+  if (mscclAvailable(comm) && !mscclIsCaller()) {
+    return mscclEnqueueCheck(
+      sendbuff, sendcounts, sdispls, recvbuff, recvcounts, rdispls,
+      0, datatype, 0, 0, ncclSum, mscclFuncAllToAllv, comm, stream);
+  }
+
+  int nRanks;
+  NCCLCHECK(ncclCommCount(comm, &nRanks));
+  if (!mscclIsCaller()) Recorder::instance().skip(true);
+  NCCLCHECK(ncclGroupStart());
+  for (int r=0; r<nRanks; r++) {
+    NCCLCHECK(ncclSend(
+        ((char*)sendbuff) + sdispls[r]*ncclTypeSize(datatype),
+        sendcounts[r],
+        datatype,
+        r,
+        comm,
+        stream));
+    NCCLCHECK(ncclRecv(
+        ((char*)recvbuff) + rdispls[r]*ncclTypeSize(datatype),
+        recvcounts[r],
+        datatype,
+        r,
+        comm,
+        stream));
+  }
+  NCCLCHECK(ncclGroupEnd());
+  if (!mscclIsCaller()) Recorder::instance().skip(false);
+  return ncclSuccess;
+}
+
 NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream);
-
-
 ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(AllReduce, NcclNvtxParamsAllReduce,
@@ -189,14 +268,16 @@ ncclResult_t ncclAllReduceWithBias_impl(const void* sendbuff, void* recvbuff, si
   return ncclEnqueueCheck(&info);
 }
 
-NCCL_API(ncclResult_t, ncclAlltoAll, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+RCCL_PARAM(AllToAllPivotEnable, "ALL_TO_ALL_PIVOT_ENABLE", 0);
+
+NCCL_API(ncclResult_t, ncclAllToAll, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
   ncclComm_t comm, hipStream_t stream);
 
 
-ncclResult_t ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+ncclResult_t ncclAllToAll_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
   ncclComm_t comm, hipStream_t stream) {
-    NVTX3_FUNC_WITH_PARAMS(AlltoAll, NcclNvtxParamsAlltoAll,
-      NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype)));
+  NVTX3_FUNC_WITH_PARAMS(AllToAll, NcclNvtxParamsAllToAll,
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), datatype));
 
   if (!mscclIsCaller()) // when msccl falls back to
   {
@@ -213,8 +294,8 @@ ncclResult_t ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t coun
   size_t rankAlign = rankOffset & ((~rankOffset) + 1);
   // Determine Pivot A2A support now that we know number of channels
   if (comm->topo->pivotA2AEnabled && comm->nChannels >= comm->topo->pivotA2ANumBiRings * 2 &&
-      rankOffset >= 744 * 1024 && rankAlign != 4 /*&& rcclParamAllToAllPivotEnable()*/) {
-    struct ncclInfo info = { ncclFuncAlltoAll, "AlltoAll",
+      rankOffset >= 744 * 1024 && rankAlign != 4 && rcclParamAllToAllPivotEnable()) {
+    struct ncclInfo info = { ncclFuncAllToAllPivot, "AllToAllPivot",
       sendbuff, recvbuff, count, datatype, ncclSum, 0, comm, stream, /* Args */
       ALLTOALL_PIVOT_CHUNKSTEPS, ALLTOALL_PIVOT_SLICESTEPS, nullptr };
     return ncclEnqueueCheck(&info);
@@ -284,7 +365,6 @@ ncclResult_t ncclAllToAllv_impl(const void *sendbuff, const size_t sendcounts[],
 
 NCCL_API(ncclResult_t, ncclBroadcast, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
     ncclComm_t comm, cudaStream_t stream);
-
 ncclResult_t ncclBroadcast_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
     ncclComm_t comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(Broadcast, NcclNvtxParamsBroadcast,
@@ -316,46 +396,32 @@ ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int ro
   return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
 }
 
-NCCL_API(ncclResult_t, ncclGather, const void* sendbuff, void* recvbuff, size_t sendcount,
-    ncclDataType_t datatype, int root, ncclComm_t comm, hipStream_t stream);
-
-ncclResult_t ncclGather_impl(const void* sendbuff, void* recvbuff, size_t sendcount,
-    ncclDataType_t datatype, int root, ncclComm_t comm, hipStream_t stream) {
+NCCL_API(ncclResult_t, ncclGather, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm* comm, cudaStream_t stream);
+ncclResult_t ncclGather_impl(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
+    ncclComm* comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(Gather, NcclNvtxParamsGather,
-    NVTX3_PAYLOAD(comm ? comm->commHash : 0, sendcount * ncclTypeSize(datatype), root, datatype));
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), root));
 
   if (!mscclIsCaller()) // when msccl falls back to
   {
-    NCCLCHECK(Recorder::instance().record(rrGather, sendbuff, recvbuff, sendcount, datatype, comm, stream, root));
+    NCCLCHECK(Recorder::instance().record(rrGather, sendbuff, recvbuff, count, datatype, comm, stream, root));
   }
 
   if (mscclAvailable(comm) && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
-      sendcount, datatype, root, 0, ncclSum, mscclFuncGather, comm, stream);
+      count, datatype, root, 0, ncclSum, mscclFuncGather, comm, stream);
   }
 
-  int nRanks;
-  NCCLCHECK(ncclCommCount(comm, &nRanks));
-  size_t rankOffset = sendcount * ncclTypeSize(datatype);
-  if (sendcount == 0) return ncclSuccess;
-  int rank;
-  NCCLCHECK(ncclCommUserRank(comm, &rank));
-  if (!mscclIsCaller()) Recorder::instance().skip(true);
-  NCCLCHECK(ncclGroupStart());
-  if (rank == root) {
-    for (int r=0; r<nRanks; r++)
-      NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset, sendcount, datatype, r, comm, stream));
-  }
-  NCCLCHECK(ncclSend(sendbuff, sendcount, datatype, root, comm, stream));
-  NCCLCHECK(ncclGroupEnd());
-  if (!mscclIsCaller()) Recorder::instance().skip(false);
-  return ncclSuccess;
+  struct ncclInfo info = { ncclFuncGather, "Gather",
+    sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
+    GATHER_CHUNKSTEPS, GATHER_SLICESTEPS };
+  return ncclEnqueueCheck(&info);
 }
 
 NCCL_API(ncclResult_t, ncclReduce, const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream);
-
 ncclResult_t ncclReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(Reduce, NcclNvtxParamsReduce,
@@ -381,8 +447,6 @@ ncclResult_t ncclReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
 
 NCCL_API(ncclResult_t, ncclReduceScatter, const void* sendbuff, void* recvbuff, size_t recvcount,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream);
-
-
 ncclResult_t ncclReduceScatter_impl(const void* sendbuff, void* recvbuff, size_t recvcount,
     ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(ReduceScatter, NcclNvtxParamsReduceScatter,
@@ -406,48 +470,32 @@ ncclResult_t ncclReduceScatter_impl(const void* sendbuff, void* recvbuff, size_t
   return ncclEnqueueCheck(&info);
 }
 
-NCCL_API(ncclResult_t, ncclScatter, const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype, int root,
-    ncclComm_t comm, hipStream_t stream);
-
-
-ncclResult_t ncclScatter_impl(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype, int root,
-    ncclComm_t comm, hipStream_t stream) {
+NCCL_API(ncclResult_t, ncclScatter, const void* sendbuff, void* recvbuff, size_t count,
+    ncclDataType_t datatype, int root, ncclComm* comm, cudaStream_t stream);
+ncclResult_t ncclScatter_impl(const void* sendbuff, void* recvbuff, size_t count,
+    ncclDataType_t datatype, int root, ncclComm* comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(Scatter, NcclNvtxParamsScatter,
-    NVTX3_PAYLOAD(comm ? comm->commHash : 0, recvcount * ncclTypeSize(datatype), root, datatype));
+    NVTX3_PAYLOAD(comm ? comm->commHash : 0, count * ncclTypeSize(datatype), root, datatype));
 
   if (!mscclIsCaller()) // when msccl falls back to
   {
-    NCCLCHECK(Recorder::instance().record(rrScatter, sendbuff, recvbuff, recvcount, datatype, comm, stream, root));
+    NCCLCHECK(Recorder::instance().record(rrScatter, sendbuff, recvbuff, count, datatype, comm, stream, root));
   }
 
   if (mscclAvailable(comm) && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
-      recvcount, datatype, root, 0, ncclSum, mscclFuncScatter, comm, stream);
+      count, datatype, root, 0, ncclSum, mscclFuncScatter, comm, stream);
   }
 
-  int nRanks;
-  NCCLCHECK(ncclCommCount(comm, &nRanks));
-  size_t rankOffset = recvcount * ncclTypeSize(datatype);
-  if (recvcount == 0) return ncclSuccess;
-  int rank;
-  NCCLCHECK(ncclCommUserRank(comm, &rank));
-  if (!mscclIsCaller()) Recorder::instance().skip(true);
-  NCCLCHECK(ncclGroupStart());
-  if (rank == root) {
-    for (int r=0; r<nRanks; r++)
-      NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset, recvcount, datatype, r, comm, stream));
-  }
-  NCCLCHECK(ncclRecv(recvbuff, recvcount, datatype, root, comm, stream));
-  NCCLCHECK(ncclGroupEnd());
-  if (!mscclIsCaller()) Recorder::instance().skip(false);
-  return ncclSuccess;
+  struct ncclInfo info = { ncclFuncScatter, "Scatter",
+    sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
+    SCATTER_CHUNKSTEPS, SCATTER_SLICESTEPS };
+  return ncclEnqueueCheck(&info);
 }
 
 NCCL_API(ncclResult_t, ncclSend, const void* sendbuff, size_t count, ncclDataType_t datatype, int peer,
     ncclComm_t comm, cudaStream_t stream);
-
-
 ncclResult_t ncclSend_impl(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer,
     ncclComm_t comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(Send, NcclNvtxParamsSendRecv,
@@ -473,7 +521,6 @@ ncclResult_t ncclSend_impl(const void* sendbuff, size_t count, ncclDataType_t da
 
 NCCL_API(ncclResult_t, ncclRecv, void* recvbuff, size_t count, ncclDataType_t datatype, int peer,
     ncclComm_t comm, cudaStream_t stream);
-
 ncclResult_t ncclRecv_impl(void* recvbuff, size_t count, ncclDataType_t datatype, int peer,
     ncclComm_t comm, cudaStream_t stream) {
   NVTX3_FUNC_WITH_PARAMS(Recv, NcclNvtxParamsSendRecv,

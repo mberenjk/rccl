@@ -31,7 +31,7 @@ ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t count,
                   ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
 
 ncclResult_t
-ncclAllToAllv_impl(const void* sendbuff, const size_t sendcounts[],
+ncclAlltoAllv_impl(const void* sendbuff, const size_t sendcounts[],
                    const size_t sdispls[], void* recvbuff, const size_t recvcounts[],
                    const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
                    hipStream_t stream);
@@ -193,7 +193,7 @@ compute_table_size(size_t nmembers)
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllGather_fn, 0);
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllReduce_fn, 1);
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAlltoAll_fn, 2);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllToAllv_fn, 3);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAlltoAllv_fn, 3);
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclBroadcast_fn, 4);
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGather_fn, 5);
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclReduce_fn, 6);
@@ -249,7 +249,7 @@ RcclGetFunctionTable_impl()
                                                &ncclAllGather_impl,
                                                &ncclAllReduce_impl,
                                                &ncclAlltoAll_impl,
-                                               &ncclAllToAllv_impl,
+                                               &ncclAlltoAllv_impl,
                                                &ncclBroadcast_impl,
                                                &ncclGather_impl,
                                                &ncclReduce_impl,
@@ -334,7 +334,7 @@ NCCL_API(ncclResult_t, ncclAllReduceWithBias, const void* sendbuff, void* recvbu
 NCCL_API(ncclResult_t, ncclAlltoAll, const void* sendbuff, void* recvbuff, size_t count,
          ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
 
-NCCL_API(ncclResult_t, ncclAllToAllv, const void* sendbuff, const size_t sendcounts[],
+NCCL_API(ncclResult_t, ncclAlltoAllv, const void* sendbuff, const size_t sendcounts[],
          const size_t sdispls[], void* recvbuff, const size_t recvcounts[],
          const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
          hipStream_t stream);
@@ -466,11 +466,11 @@ ncclAlltoAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t 
 }
 
 ncclResult_t
-ncclAllToAllv(const void* sendbuff, const size_t sendcounts[], const size_t sdispls[],
+ncclAlltoAllv(const void* sendbuff, const size_t sendcounts[], const size_t sdispls[],
               void* recvbuff, const size_t recvcounts[], const size_t rdispls[],
               ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream)
 {
-    return ::rccl::RcclGetFunctionTable()->ncclAllToAllv_fn(sendbuff, sendcounts, sdispls,
+    return ::rccl::RcclGetFunctionTable()->ncclAlltoAllv_fn(sendbuff, sendcounts, sdispls,
                                                             recvbuff, recvcounts, rdispls,
                                                             datatype, comm, stream);
 }

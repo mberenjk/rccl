@@ -156,37 +156,16 @@ def kernel_conds(k):
   return cudart_cond, arch_cond
 
 def instantiate(k):
-  cudart_cond, arch_cond = kernel_conds(k)
-  if (cudart_cond, arch_cond) == (None, None):
-    form_red_ty = (
-      "__global__ void {cname}(ncclSymkDevWorkArgs4K NCCL_GRID_CONSTANT const args4K) {{\n"
-      "  ncclSymkRun_{id}<{red}, {ty}>(&args4K.args);\n"
-      "}}"
-    )
-    form = (
-      "__global__ void {cname}(ncclSymkDevWorkArgs4K NCCL_GRID_CONSTANT const args4K) {{\n"
-      "  ncclSymkRun_{id}(&args4K.args);\n"
-      "}}"
-    )
-  else:
-    form_red_ty = (
-      "#if {cudart_cond}\n"
-      "  __global__ void {cname}(ncclSymkDevWorkArgs4K NCCL_GRID_CONSTANT const args4K) {{\n"
-      "    #if {arch_cond}\n"
-      "      ncclSymkRun_{id}<{red}, {ty}>(&args4K.args);\n"
-      "    #endif\n"
-      "  }}\n"
-      "#endif"
-    )
-    form = (
-      "#if {cudart_cond}\n"
-      "  __global__ void {cname}(ncclSymkDevWorkArgs4K NCCL_GRID_CONSTANT const args4K) {{\n"
-      "    #if {arch_cond}\n"
-      "      ncclSymkRun_{id}(&args4K.args);\n"
-      "    #endif\n"
-      "  }}\n"
-      "#endif"
-    )
+  form_red_ty = (
+    "__global__ void {cname}(ncclSymkDevWorkArgs4K NCCL_GRID_CONSTANT const *args4K) {{\n"
+    "  ncclSymkRun_{id}<{red}, {ty}>(args4K->args);\n"
+    "}}"
+  )
+  form = (
+    "__global__ void {cname}(ncclSymkDevWorkArgs4K NCCL_GRID_CONSTANT const *args4K) {{\n"
+    "  ncclSymkRun_{id}(args4K->args);\n"
+    "}}"
+  )
 
   id = k.coll+'_'+k.algo
   cname = kernel_cname(k)
@@ -197,18 +176,7 @@ def instantiate(k):
   return inst
 
 def prototype(k):
-  cudart_cond, arch_cond = kernel_conds(k)
-  if cudart_cond is None:
-    form = "__global__ void {cname}(ncclSymkDevWorkArgs4K const);"
-  else:
-    form = (
-      "#if {cudart_cond}\n"
-      "  __global__ void {cname}(ncclSymkDevWorkArgs4K const);\n"
-      "#else\n"
-      "  constexpr void* {cname} = nullptr;\n"
-      "#endif"
-    )
-  return form.format(cname=kernel_cname(k), cudart_cond=cudart_cond)
+  return "__global__ void {cname}(ncclSymkDevWorkArgs4K const *args4K);".format(cname=kernel_cname(k))
 
 ################################################################################
 
@@ -235,14 +203,16 @@ files_to_print = ""
 for (fname, coll), ks in kernels_by_file.items():
   files_to_print += fname + ";"
   with open(os.path.join(gensrc, fname), "w") as f:
+    print("-- Generating %s" % os.path.join(gensrc, fname))
     emitln(f, '#include "sym_kernels.h"')
-    emitln(f, '#include "symmetric/kernel.cuh"')
-    emitln(f, '#include "symmetric/{coll}.cuh"'.format(coll=coll_to_lower[coll]))
+    emitln(f, '#include "symmetric/kernel.h"')
+    emitln(f, '#include "symmetric/{coll}.h"'.format(coll=coll_to_lower[coll]))
     for k in ks:
       emitln(f, instantiate(k))
 
 # Generate <gensrc>/sym_kernels_host.cc
 with open(os.path.join(gensrc, "sym_kernels_host.cc"), "w") as f:
+  print("-- Generating %s" % os.path.join(gensrc, "symmetric_kernels.cc"))
   emitln(f, '#include "sym_kernels.h"')
   emitln(f, '#include "device.h"')
   emitln(f, '')
@@ -284,26 +254,3 @@ with open(os.path.join(gensrc, "sym_kernels_host.cc"), "w") as f:
   emitln(f, '}')
   indents -= 1
   emitln(f, '}')
-
-# Generate <gensrc>/rules.mk
-files_to_print += "rules.mk;"
-files_to_print += "sym_kernels_host.cc;"
-
-if os.environ.get("NCCL_USE_CMAKE", "0") == "1":
-    print(files_to_print)
-
-with open(os.path.join(gensrc, "rules.mk"), "w") as f:
-  inst_names = sorted(set(kernel_fname(k) for k in enumerate_kernels()))
-  names = inst_names + ["sym_kernels_host.cc"]
-  f.write("LIB_OBJS_SYM_GEN = $(patsubst %,$(OBJDIR)/genobj/symmetric/%.o,{names})\n"
-          .format(names=" ".join(names)))
-  f.write("\n")
-
-  inst_names = sorted(set((k.coll, kernel_fname(k), kernel_gencode(k)) for k in enumerate_kernels()))
-  for coll, name, gencode in inst_names:
-    f.write(
-      "$(OBJDIR)/genobj/symmetric/{name}.o: $(OBJDIR)/gensrc/symmetric $(OBJDIR)/genobj/symmetric/{coll}.cu.d\n"
-      "\t" "$(call COMPILE_SYM,$@,$(OBJDIR)/gensrc/symmetric/{name},{gencode})\n"
-      "\n"
-      .format(name=name, coll=coll_to_lower[coll], gencode=gencode)
-    )

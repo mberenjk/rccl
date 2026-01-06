@@ -1,5 +1,7 @@
 /*************************************************************************
  * Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
+ * Modification Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
+ * SPDX-License-Identifier: MIT
  *
  * See LICENSE.txt for license information
  ************************************************************************/

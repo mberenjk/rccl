@@ -796,7 +796,7 @@ ncclResult_t ncclIbInit(void** ctx, uint64_t commId, ncclNetCommConfig_t* config
         if (nPorts == 0 && ncclSuccess != wrap_ibv_close_device(context)) { ret = ncclInternalError; goto fail; }
       }
 
-      if (nIbDevs && (ncclSuccess != wrap_ibv_free_device_list(devices))) { ret = ncclInternalError; goto fail; }
+      if (ncclSuccess != wrap_ibv_free_device_list(devices)) { ret = ncclInternalError; goto fail; }
     }
     if (ncclNIbDevs == 0) {
       INFO(NCCL_INIT|NCCL_NET, "NET/IB : No device found.");
@@ -1878,9 +1878,9 @@ ib_recv:
     if (rComm->flushEnabled) {
       if (rcclParamIbGdrFlushGpuMemNoRelaxedOrdering()) {
 #if defined(HIP_UNCACHED_MEMORY)
-        NCCLCHECKGOTO(ncclCudaCalloc(&rCommDev->gpuFlush.gpuFlushGpuMem, sizeof(int), nullptr, hipDeviceMallocUncached), ret, fail);
+        NCCLCHECKGOTO(ncclCudaCalloc(&rCommDev->gpuFlush.gpuFlushGpuMem, sizeof(int), hipDeviceMallocUncached), ret, fail);
 #else
-        NCCLCHECKGOTO(ncclCudaCalloc(&rCommDev->gpuFlush.gpuFlushGpuMem, sizeof(int), nullptr, hipDeviceMallocFinegrained), ret, fail);
+        NCCLCHECKGOTO(ncclCudaCalloc(&rCommDev->gpuFlush.gpuFlushGpuMem, sizeof(int), hipDeviceMallocFinegrained), ret, fail);
 #endif
         if (useDmaBuf)
         {
@@ -2748,7 +2748,9 @@ ncclResult_t ncclIbCloseListen(void* listenComm) {
 
 ncclResult_t ncclIbFinalize(void* ctx) {
   netRefCount--;
+  return ncclSuccess;
 }
+
 ncclResult_t rcclNetP2pPolicy(void* handle, int isP2p) {
   if (!handle) return ncclInvalidArgument;
   struct ncclIbHandle* ibHandle = (struct ncclIbHandle*)handle;

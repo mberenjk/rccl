@@ -8,6 +8,8 @@
 #define _NCCL_DEVICE_COOP_H_
 #include "utility.h"
 
+#define __CUDACC__ 0
+
 // ncclCoop[Foo]: NCCL's versions of CUDA's Cooperative Groups. They conform
 // to just this subset of the CUDA API:
 //   int Coop::thread_rank();

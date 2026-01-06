@@ -529,7 +529,7 @@ static ncclResult_t mscclFallBackSavedParams() {
           param.comm, param.stream));
         break;
       case mscclFuncAllToAllv:
-        NCCLCHECK(ncclAllToAllv(
+        NCCLCHECK(ncclAlltoAllv(
           param.p.sendBuff, param.p.sendCounts, param.p.sDisPls,
           param.p.recvBuff, param.p.recvCounts, param.p.rDisPls,
           param.p.dataType, param.comm, param.stream));

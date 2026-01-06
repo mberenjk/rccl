@@ -940,8 +940,6 @@ void ncclTopoFree(struct ncclTopoSystem* system) {
   free(system);
 }
 
-NCCL_PARAM(NChannelsPerPeer, "NCHANNELS_PER_PEER", -2);
-
 static ncclResult_t ncclTopoGetNchannels(struct ncclComm* comm, int g /*local gpu index*/, int peerRank, int* nChannels) {
   int peer;
   struct ncclTopoSystem* system = comm->topo;
@@ -1017,7 +1015,7 @@ ncclResult_t ncclTopoComputeP2pChannels(struct ncclComm* comm) {
     comm->p2pnChannels = std::min(pow2Up(comm->p2pnChannels), pow2Down(ncclDevMaxChannelsForArgsBytes(ncclParamWorkArgsBytes())));
   } else {
     // Round to next pow2 nChannelsPerPeer and nChannels
-    comm->p2pnChannelsPerPeer = (ncclParamNChannelsPerPeer() == -2 ? pow2Up(minChannels) : ncclParamNChannelsPerPeer());
+    comm->p2pnChannelsPerPeer = pow2Up(minChannels);
     // Doubling P2P channels per peer on single node
     if (comm->topo->nodes[GPU].count == comm->topo->nRanks && (IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx942") || IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx950"))) comm->p2pnChannelsPerPeer *= 2;
     comm->p2pnChannels = std::min(pow2Up(comm->p2pnChannels), 4*CHANNEL_LIMIT);

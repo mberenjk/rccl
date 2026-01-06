@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+ * Modification Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -351,6 +352,12 @@ const char* ncclSymkKernelIdToString(int kernelId) {
   }
   return kernelName[kernelId];
 }
+
+#ifndef GENERATE_SYM_KERNELS
+void* ncclSymGetKernelPtr(ncclSymkKernelId kernelId, int/*ncclDevRedOp_t*/ red, ncclDataType_t ty) {
+  return nullptr;
+}
+#endif
 
 /* this function fills in the devWork except nextWorkOffset */
 ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* task, struct ncclSymkDevWork* outDevWork) {

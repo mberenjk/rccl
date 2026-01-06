@@ -7,8 +7,9 @@
 #include "sym_kernels.h"
 #include "bitops.h"
 #include "collectives.h"
-#include "../op128.h"
-#include "../reduce_kernel.h"
+#include "op128.h"
+#include "reduce_kernel.h"
+#include "common.h"
 
 #if __CUDA_ARCH__ >= 700
 // __grid_constant__ appears to break cuda-gdb

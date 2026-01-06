@@ -1,6 +1,9 @@
+// Modification Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
+// SPDX-License-Identifier: MIT 
+
 #include "sym_kernels.h"
-#include "kernel.cuh"
-#include "primitives.cuh"
+#include "symmetric/kernel.h"
+#include "symmetric/primitives.h"
 
 template<int BytePerPack, int UnrollPacks, int UnrollPeers>
 static __device__ void bcastDeep(
@@ -132,13 +135,13 @@ static __device__ void bcast(
     }
   }
 
+<<<<<<< HEAD
+  if (sizeof(T) == 4 || (sizeof(T) < 4 && (inputUptr-outputUptr)%4 == 0)) {
+    constexpr int BytePerPack = 4, UnrollPacks = 1, UnrollPeers = 1;
+=======
   if (sizeof(T) == 4 || (sizeof(T) < 4 && (input.offset - output.offset)%4 == 0)) {
-    constexpr int BytePerPack = 4, UnrollPacks = 4, UnrollPeers = 4;
-    constexpr int BytePerChunk = MinWarpPerBlock*UnrollPacks*WARP_SIZE*BytePerPack;
-    uint32_t chunks = (nBytes-cursor)/BytePerChunk;
     chunks -= imodFast32(chunks, nBlocks, nBlocks_rcp32);
     if (chunks != 0) {
-      uintptr_t cursorAfter = cursor + uintptr_t(chunks)*BytePerChunk;
       bcastDeep<(sizeof(T) <= BytePerPack ? BytePerPack : 0), UnrollPacks, UnrollPeers>(
         handler, tn, t, waitNeeded, bar,
         (ncclSymPtr<char>)input + cursor,

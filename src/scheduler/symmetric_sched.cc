@@ -217,7 +217,7 @@ ncclResult_t ncclSymmetricTaskScheduler(struct ncclComm* comm, struct ncclIntruQ
 
   memcpy(&argsBuf->kcomm, &comm->symkState.kcomm, sizeof(comm->symkState.kcomm));
   plan->workBytes = totalCount * ncclTypeSize(headTask->datatype);
-  plan->channelMask = uint64_t(-1) >> (64 - curChannel);
+  // plan->channelMask = uint64_t(-1) >> (64 - curChannel);
   plan->kernelSymArgs = (void*)argsBuf;
   plan->workStorageType = ncclDevWorkStorageTypeArgs;
 

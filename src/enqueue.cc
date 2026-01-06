@@ -2753,6 +2753,14 @@ static ncclResult_t p2pTaskAppend(
             comm->channels[channelId].peers[peer]->send[1].hasSeen = 1;
             comm->channels[channelId].peers[peer]->send[1].p2pOnly = 1;
             comm->connectSend[peer].masks[channelId/64] |= (1UL<<(channelId%64));
+            // comm->connectSend[peer] |= (1UL<<channelId);
+            comm->connectSend[peer].masks[channelId/64] |= (1UL<<(channelId%64));
+            ncclGroupCommPreconnect(comm);
+          }
+          if (comm->p2pNet && comm->channels[channelId].peers[peer]->send[NCCL_CONN_IDX_P2P_NET].hasSeen == 0) {
+            comm->channels[channelId].peers[peer]->send[1].hasSeen = 1;
+            //comm->connectSend[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET] |= (1UL<<channelId);
+            comm->connectSend[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET].masks[channelId/64] |= (1UL<<(channelId%64));
             ncclGroupCommPreconnect(comm);
           }
         } else {
@@ -2760,6 +2768,14 @@ static ncclResult_t p2pTaskAppend(
             comm->channels[channelId].peers[peer]->recv[1].hasSeen = 1;
             comm->channels[channelId].peers[peer]->recv[1].p2pOnly = 1;
             comm->connectRecv[peer].masks[channelId/64] |= (1UL<<(channelId%64));
+            // comm->connectRecv[peer] |= (1UL<<channelId);
+            comm->connectRecv[peer].masks[channelId/64] |= (1UL<<(channelId%64));
+            ncclGroupCommPreconnect(comm);
+          }
+          if (comm->p2pNet && comm->channels[channelId].peers[peer]->recv[NCCL_CONN_IDX_P2P_NET].hasSeen == 0) {
+            comm->channels[channelId].peers[peer]->recv[1].hasSeen = 1;
+            //comm->connectRecv[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET] |= (1UL<<channelId);
+            comm->connectRecv[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET].masks[channelId/64] |= (1UL<<(channelId%64));
             ncclGroupCommPreconnect(comm);
           }
         }
@@ -2793,7 +2809,7 @@ static ncclResult_t collTaskAppend(
   t->root = info->root;
   t->datatype = info->datatype;
   size_t elementSize = ncclTypeSize(t->datatype);
-  if (t->func == ncclFuncAllGather || t->func == ncclFuncBroadcast) {
+  if (t->func == ncclFuncAllGather || t->func == ncclFuncBroadcast || t->func == ncclFuncAlltoAllPivot) {
     t->count *= elementSize;
     t->datatype = ncclInt8;
     elementSize = 1;

@@ -429,6 +429,7 @@ ncclResult_t ncclTopoAddGpu(struct ncclXmlNode* xmlGpu, struct ncclTopoSystem* s
 
 #define PCI_BRIDGE_DEVICE_CLASS "0x060400"
 
+// struct kvDict kvDictPciClass[] = { { PCI_BRIDGE_DEVICE_CLASS, PCI }, {"0x080100", /*CX8 data direct*/PCI}, { "0x068000", NVS }, { "0x068001", CPU }, { "0x03", GPU }, { "0x02", NIC }, { NULL, PCI /* Default fallback value */ } };
 struct kvDict kvDictPciClass[] = { { PCI_BRIDGE_DEVICE_CLASS, PCI }, { "0x068000", NVS }, { "0x068001", CPU }, { "0x03", GPU }, { "0x02", NIC }, { "0x120000", GPU }, { NULL, PCI /* Default fallback value */ } };
 struct kvDict kvDictPciGen[] = {
   { "2.5 GT/s", 15 }, { "5 GT/s", 30 }, { "8 GT/s", 60 }, { "16 GT/s", 120 }, { "32 GT/s", 240 }, /* Kernel 5.6 and earlier */

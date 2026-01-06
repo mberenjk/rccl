@@ -11,7 +11,7 @@
 
 NCCL_API(ncclResult_t, ncclMemAlloc, void **ptr, size_t size);
 ncclResult_t  ncclMemAlloc_impl(void **ptr, size_t size) {
-  NVTX3_FUNC_RANGE_IN(nccl_domain);
+  NCCL_NVTX3_FUNC_RANGE;
   ncclResult_t ret = ncclSuccess;
 
 #if ROCM_VERSION >= 70000
@@ -100,7 +100,7 @@ fail:
 
 NCCL_API(ncclResult_t, ncclMemFree, void *ptr);
 ncclResult_t  ncclMemFree_impl(void *ptr) {
-  NVTX3_FUNC_RANGE_IN(nccl_domain);
+  NCCL_NVTX3_FUNC_RANGE;
   ncclResult_t ret = ncclSuccess;
   int saveDevice;
 

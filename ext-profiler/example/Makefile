@@ -13,12 +13,12 @@ DST_DIR   := $(BUILDDIR)
 OBJ_FILES := $(SRC_FILES:%.cc=${DST_DIR}/%.o)
 DEP_FILES := $(OBJ_FILES:%.o=%.dep)
 
-build: ${BUILDDIR}/librccl-profiler.so
+build: ${DST_DIR}/librccl-profiler-example.so
 
-${BUILDDIR}/librccl-profiler.so: ${SRC_FILES}
+${DST_DIR}/librccl-profiler-example.so: ${SRC_FILES}
 	@printf "Compiling  %-35s > %s\n" $< $@
 	@mkdir -p ${DST_DIR}
 	$(CXX) -Inccl -I${CUDA_INC} -fPIC -shared -o $@ $^
 
 clean:
-	rm -f ${BUILDDIR}/librccl-profiler.so
+	rm -f ${DST_DIR}/librccl-profiler-example.so

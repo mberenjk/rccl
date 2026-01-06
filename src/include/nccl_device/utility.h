@@ -7,6 +7,8 @@
 #ifndef _NCCL_DEVICE_UTILITY_H_
 #define _NCCL_DEVICE_UTILITY_H_
 
+#define __CUDACC__ 0
+
 #if !defined(__HIP_PLATFORM_AMD__) || !defined(__HIPCC__)
   #define NCCL_DEVICE_INLINE __device__ __forceinline__
   #define NCCL_HOST_DEVICE_INLINE __host__ __device__ __forceinline__
@@ -27,8 +29,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#if !defined(__HIP_PLATFORM_AMD__) || !defined(__HIPCC__)
-#include <cuda/atomic>
+#if __CUDACC__
+// #include <cuda/atomic>
 #endif
 
 #if __cplusplus

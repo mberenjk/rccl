@@ -21,12 +21,13 @@ inline uint8_t ncclP2pChannelBaseForRound(struct ncclComm* comm, int p2pRound, i
   if (comm->nNodes > 1) {
     int nodeDelta = p2pRound/comm->maxLocalRanks;
     int localDelta = p2pRound%comm->maxLocalRanks;
-    base = nodeDelta*divUp(comm->maxLocalRanks, NCCL_MAX_DEV_WORK_P2P_PER_BATCH);
-    base += localDelta/NCCL_MAX_DEV_WORK_P2P_PER_BATCH;
+    int batchSize = (comm->nNodes > 2 && p2pBatchEnable) ? NCCL_MAX_DEV_WORK_P2P_PER_BATCH : 1;
+    base = nodeDelta*divUp(comm->maxLocalRanks, batchSize);
+    base += localDelta/batchSize;
   } else {
     base = p2pRound;
   }
-  return reverseBits(base, log2Up(comm->p2pnChannels));
+  return base & 0xff;
 }
 
 #endif

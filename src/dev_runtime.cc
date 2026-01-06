@@ -176,7 +176,7 @@ static ncclResult_t symMemoryMapLsaTeam(
     }
     uintptr_t base = reinterpret_cast<uintptr_t>(devr->lsaFlatBase);
     CUdeviceptr addr = reinterpret_cast<CUdeviceptr>(base + r * devr->bigSize + bigOffset);
-    //CUdeviceptr addr = reinterpret_cast<uintptr_t>((char*)devr->lsaFlatBase + r*devr->bigSize + bigOffset);
+    // CUdeviceptr addr = reinterpret_cast<uintptr_t>((char*)devr->lsaFlatBase + r*devr->bigSize + bigOffset);
     CUCHECKGOTO(cuMemMap(addr, size, 0, impHandle, 0), ret, fail);
     CUCHECKGOTO(cuMemSetAccess(addr, size, &accessDesc, 1), ret, fail);
     if (r != devr->lsaSelf) {
@@ -406,8 +406,8 @@ static void symMemoryDropRef(
     for (int r = 0; r < devr->lsaSize; r++) {
       uintptr_t base = reinterpret_cast<uintptr_t>(devr->lsaFlatBase);
       CUdeviceptr addr = reinterpret_cast<CUdeviceptr>(base + r * devr->bigSize + mem->bigOffset);
-      //CUdeviceptr addr = reinterpret_cast<uintptr_t>((char*)devr->lsaFlatBase + r*devr->bigSize + mem->bigOffset);
-      CUDACHECKIGNORE(cuMemUnmap(addr, mem->size));
+      // CUdeviceptr addr = reinterpret_cast<uintptr_t>((char*)devr->lsaFlatBase + r*devr->bigSize + mem->bigOffset);
+      CUCHECKIGNORE(cuMemUnmap(addr, mem->size));
     }
     ncclSpaceFree(&devr->bigSpace, mem->bigOffset, mem->size);
     CUDACHECKIGNORE(cuMemRelease(mem->memHandle));
@@ -571,9 +571,9 @@ ncclResult_t ncclDevrWindowRegisterInGroup(
   }
 
   // Get underlying cumem handle:
-  CUDACHECKGOTO(cuMemGetAddressRange(&memAddr, &memSize, reinterpret_cast<CUdeviceptr>(userPtr)), ret, fail_locReg);
-  //memOffset = reinterpret_cast<CUdeviceptr>(userPtr) - memAddr;
+  CUCHECKGOTO(cuMemGetAddressRange(&memAddr, &memSize, reinterpret_cast<CUdeviceptr>(userPtr)), ret, fail_locReg);
   memOffset = reinterpret_cast<uintptr_t>(userPtr) - reinterpret_cast<uintptr_t>(memAddr);
+  // memOffset = reinterpret_cast<CUdeviceptr>(userPtr) - memAddr;
   if (memOffset%NCCL_WIN_REQUIRED_ALIGNMENT != 0) {
     WARN("Window address must be suitably aligned.");
     ret = ncclInvalidArgument;
@@ -792,8 +792,8 @@ fail:
 
 NCCL_API(ncclResult_t, ncclCommWindowRegister, ncclComm_t comm, void* ptr, size_t size, ncclWindow_t* win, int winFlags);
 ncclResult_t ncclCommWindowRegister_impl(
-    ncclComm_t comm, void* userPtr, size_t userSize,
-    ncclWindow_t* outWinDev, int winFlags
+    struct ncclComm* comm, void* userPtr, size_t userSize,
+    struct ncclWindow_vidmem** outWinDev, int winFlags
   ) {
   ncclResult_t ret = ncclSuccess;
   int saveDev;

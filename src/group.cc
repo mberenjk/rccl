@@ -692,7 +692,7 @@ ncclResult_t ncclGroupEndInternal(ncclSimInfo_t* simInfo) {
   if (mscclAvailable() && !mscclIsCaller()) {
     NCCLCHECK(mscclGroupEnd());
   }
-
+  
   if (ncclProfilerApiState.profilerGroupDepth > 0) {
     ncclProfilerApiState.profilerGroupDepth--;
   }

@@ -1,7 +1,10 @@
+// Modification Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
+// SPDX-License-Identifier: MIT
+
 #include "sym_kernels.h"
 #include "nccl_device.h"
-#include "kernel.cuh"
-#include "primitives.cuh"
+#include "symmetric/kernel.h"
+#include "symmetric/primitives.h"
 
 template<int BytePerPack, int UnrollPacks, int UnrollPeers, typename T, typename Red>
 static __device__ __forceinline__ void allreduceDeep(

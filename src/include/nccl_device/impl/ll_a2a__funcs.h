@@ -10,6 +10,8 @@
 #include "comm__types.h"
 #include "../utility.h"
 
+#define __CUDACC__ 0
+
 #if !defined(__HIP_PLATFORM_AMD__) || !defined(__HIPCC__)
 template<typename Coop>
 NCCL_DEVICE_INLINE ncclLLA2ASession<Coop>::ncclLLA2ASession(

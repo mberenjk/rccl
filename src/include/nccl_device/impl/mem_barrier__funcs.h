@@ -9,7 +9,10 @@
 #include "mem_barrier__types.h"
 #include "comm__types.h"
 
-#if !defined(__HIP_PLATFORM_AMD__) || !defined(__HIPCC__)
+#define __CUDACC__ 0
+
+#if __CUDACC__
+
 template<typename Coop>
 NCCL_DEVICE_INLINE ncclLsaBarrierSession<Coop>::ncclLsaBarrierSession(
     Coop coop, ncclDevComm const& comm, ncclTeam team,

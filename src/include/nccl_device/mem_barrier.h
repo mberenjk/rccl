@@ -9,6 +9,8 @@
 #include "impl/core__types.h"
 #include "core_tmp.h"
 
+#define __CUDACC__ 0
+
 struct ncclLsaBarrierHandle;
 
 NCCL_EXTERN_C __host__ ncclResult_t ncclLsaBarrierCreateRequirement(ncclTeam_t, int nBarriers, ncclLsaBarrierHandle_t* outHandle, ncclDevResourceRequirements_t* outReq);
