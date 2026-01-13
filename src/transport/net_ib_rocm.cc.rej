@@ -1,0 +1,81 @@
+--- src/transport/net_ib.cc
++++ src/transport/net_ib.cc
+@@ -108,9 +109,31 @@ struct ncclIbMergedDev ncclIbMergedDevs[MAX_IB_VDEVS];
+ struct ncclIbDev ncclIbDevs[MAX_IB_DEVS];
+ pthread_mutex_t ncclIbLock = PTHREAD_MUTEX_INITIALIZER;
+ static int ncclIbRelaxedOrderingEnabled = 0;
++static bool rcclAinicRoce = 0;
++static bool rcclCtsInlineData = 0;
++static bool rcclCtsOffloadEnabled = 0;
++static bool ncclIbUseInline = 0;
++static int ncclIbGdrFlushDisable = 0;
++
++enum ncclIbChannelType {
++  ncclIbChannelTypeCts  = 0,
++  ncclIbChannelTypeData = 1,
++  ncclIbChannelTypeMax  = 2
++};
++
++struct ncclChannelToUd {
++    int channelId;
++    bool udId;
++    bool udAllocated;
++};
++
++static ncclChannelToUd nccl_channel_ud_map[MAXCHANNELS][ncclIbChannelTypeMax];
++static bool nccl_channel_last_ud[MAX_IB_DEVS][ncclIbChannelTypeMax];
+ 
+ #define NCCL_IB_LLSTR(ll) (((ll) == IBV_LINK_LAYER_INFINIBAND) ? "IB" : (((ll) == IBV_LINK_LAYER_ETHERNET) ? "RoCE" : "UNSPECIFIED"))
+ 
++#define NCCL_CTS_QP_SLOT_INVALID 0xFF
++
+ #define NCCL_IB_SL_DEFAULT 0
+ #define NCCL_IB_TC_DEFAULT 0
+ 
+@@ -795,6 +829,24 @@ ncclResult_t ncclIbInit(ncclDebugLogger_t logFunction, ncclProfilerCallback_t pr
+     INFO(NCCL_INIT|NCCL_NET, "NET/IB : Using%s %s; OOB %s:%s", line, ncclIbRelaxedOrderingEnabled ? "[RO]" : "",
+           ncclIbIfName, ncclSocketToString(&ncclIbIfAddr, addrline));
+ 
++    ncclIbUseInline = ncclParamIbUseInline();
++    ncclIbGdrFlushDisable = ncclParamIbGdrFlushDisable();
++
++    rcclAinicRoce = ((rcclParamAinicRoce() == 1) ? true : false);
++    if (rcclAinicRoce) {
++      // for AINIC, these params are defaulted to enabled unless user forces it to disable(0).
++      rcclCtsInlineData = ((rcclParamCtsInlineData() == 0) ? false : true);
++      rcclCtsOffloadEnabled = ((rcclParamCtsOffloadEnabled() == 0) ? false : true);
++      // for AINIC IbUseInline is enabled by default always
++      ncclIbUseInline = true;
++      // for AINIC GDR flush is disabled by default
++      ncclIbGdrFlushDisable = 1;
++
++      INFO(NCCL_INIT|NCCL_NET, "NET/IB : AINIC RoCEv2 optimizations enabled: CTS Inline Data: %s; CTS Offload: %s; "
++           "IB Use Inline: enabled; GDR Flush: disabled", rcclCtsInlineData ? "Enabled": "Disabled",
++           rcclCtsOffloadEnabled ? "Enabled": "Disabled");
++    }
++
+     pthread_mutex_unlock(&ncclIbLock);
+   }
+ exit:
+@@ -1441,7 +1551,7 @@ fail:
+   goto exit;
+ }
+ 
+-ncclResult_t ncclIbConnect(int dev, ncclNetCommConfig_t* config, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** /*sendDevComm*/) {
++ncclResult_t ncclIbConnect(int dev, ncclNetCommConfig_t* config, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** sendDevComm) {
+   ncclResult_t ret = ncclSuccess;
+   struct ncclIbHandle* handle = (struct ncclIbHandle*) opaqueHandle;
+   struct ncclIbCommStage* stage = &handle->stage;
+@@ -1607,7 +1726,11 @@ ib_recv_dev_list:
+       return ncclInternalError;
+     }
+   }
+-  meta.fifoAddr = (uint64_t)comm->fifo;
++  if (rcclCtsInlineData) {
++    meta.fifoAddr = (uint64_t)comm->fifo_inline;
++  } else {
++    meta.fifoAddr = (uint64_t)comm->fifo;
++  }
+   meta.sl = (ncclParamIbSl() != -1) ? ncclParamIbSl() : (config && config->trafficClass != NCCL_NET_TRAFFIC_CLASS_UNDEF) ? config->trafficClass : NCCL_IB_SL_DEFAULT;
+   meta.tc = (ncclParamIbTc() != -1) ? ncclParamIbTc() : (config && config->trafficClass != NCCL_NET_TRAFFIC_CLASS_UNDEF) ? config->trafficClass : NCCL_IB_TC_DEFAULT;
+   strncpy(meta.devName, mergedDev->devName, MAX_MERGED_DEV_NAME);

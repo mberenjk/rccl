@@ -135,10 +135,6 @@ static __device__ void bcast(
     }
   }
 
-<<<<<<< HEAD
-  if (sizeof(T) == 4 || (sizeof(T) < 4 && (inputUptr-outputUptr)%4 == 0)) {
-    constexpr int BytePerPack = 4, UnrollPacks = 1, UnrollPeers = 1;
-=======
   if (sizeof(T) == 4 || (sizeof(T) < 4 && (input.offset - output.offset)%4 == 0)) {
     chunks -= imodFast32(chunks, nBlocks, nBlocks_rcp32);
     if (chunks != 0) {

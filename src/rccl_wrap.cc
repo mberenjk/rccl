@@ -43,6 +43,40 @@ RCCL_PARAM(WarpSpeedEnable, "WARP_SPEED_ENABLE", 0);
 #endif
 #define RCCL_WARP_SPEED_MIN_BYTES (1ULL << 26) // 64 MB
 
+RCCL_PARAM(ReducedCuEnable, "REDUCED_CU_ENABLE", 0);
+
+void rcclRestrictMaxChannels(struct ncclComm* comm, int& nc ) {
+    if (comm->nNodes > 1 && IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx950") && rcclParamReducedCuEnable() == 1)    {
+        nc = comm->nChannels = std::min(nc, 48);
+    }
+}
+
+static inline bool rcclCollSupportsRing(ncclFunc_t func) {
+  return (func == ncclFuncAllReduce ||
+          func == ncclFuncAllGather ||
+          func == ncclFuncReduceScatter ||
+          func == ncclFuncBroadcast ||
+          func == ncclFuncReduce);
+}
+
+int32_t rcclGetProtoForGfx12(ncclFunc_t collectiveFunc, size_t sizePerRank){
+  int returnVal = NCCL_PROTO_SIMPLE;
+  int SingleNodeLLCutoffs[] = {
+    /*ncclFuncBroadcast*/     1536,
+    /*ncclFuncReduce*/        8192,
+    /*ncclFuncAllGather*/     98304,
+    /*ncclFuncReduceScatter*/ 98304,
+    /*ncclFuncAllReduce*/     913532,
+    /*ncclFuncSendRecv*/      0,
+    /*ncclFuncSend*/          0,
+    /*ncclFuncRecv*/          0
+  };
+  if(collectiveFunc < sizeof(SingleNodeLLCutoffs)/sizeof(int)) {
+    returnVal = (sizePerRank <= SingleNodeLLCutoffs[collectiveFunc]) ? NCCL_PROTO_LL : NCCL_PROTO_SIMPLE;
+  }
+  return returnVal;
+}
+
 void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, struct ncclTaskColl* info) {
   // Honor user input for protocol choice
   static int userProtocolInput = -2;
@@ -61,6 +95,8 @@ void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, s
   } else if (!userProtocolInput && IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx942") && comm->nNodes == 1 && (info->func == ncclFuncReduceScatter) && sizePerRank <= 352128) {
     // Change LL protocol threshold
     info->protocol = NCCL_PROTO_LL;
+  } else if (!userProtocolInput && IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx12") && comm->nNodes == 1){
+    info->protocol = rcclGetProtoForGfx12( info->func,sizePerRank);
   } else if(!userProtocolInput && comm->nNodes >= 2 && (info->func == ncclFuncReduceScatter || info->func == ncclFuncAllGather || info->func == ncclFuncAllReduce || info->func == ncclFuncBroadcast || info->func == ncclFuncReduce)) {
     auto tunableIndex = rcclGetTunableIndex(info->func);
     auto llMin = comm->minMaxLLRange[tunableIndex][NCCL_PROTO_LL][RCCL_PROTOCOL_MIN_IDX];
@@ -350,7 +386,30 @@ ncclResult_t rcclGetProtocolName(int protocol, const char** protocolName) {
   return ncclSuccess;
 }
 
+bool rcclUseAllToAllGda(struct ncclComm* comm) {
+
+    //TODO: enable on MI350;  currently tested on MI300X
+#ifdef ENABLE_ROCSHMEM
+  if (comm->enableRocshmem && IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx942") && comm->nNodes > 1 && (comm->nRanks/comm->nNodes == 8) && comm->rocshmemThreshold <= 1048576) {
+      INFO(NCCL_INIT, "Enabling GDA alltoall for RCCL");
+      return true;
+  }
+#endif
+  return false;
+}
+
 bool rcclUseAllGatherDirect(struct ncclComm* comm, size_t& msgSize) {
+  // Check if user explicitly disabled direct AllGather
+  static int userDirectAllGatherInput = -2;
+  if (userDirectAllGatherInput == -2) {
+    const char *inputStr = getenv("RCCL_DIRECT_ALLGATHER_DISABLE");
+    userDirectAllGatherInput = !inputStr ? 0 : 1;
+  }
+  if (userDirectAllGatherInput == 1) {
+    INFO(NCCL_INIT, "RCCL DIRECT ALLGATHER has been disabled.");
+    return false;
+  }
+
   size_t threshold = rcclParamDirectAllGatherThreshold();
 
   if (IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx950") && threshold != -1) {
@@ -474,26 +533,36 @@ void rcclSetWarpSpeedSupportAndFinalCuCount(struct ncclComm* comm, struct ncclKe
 
 void rcclSetWarpSpeedAuto(struct ncclComm* comm, struct ncclTaskColl* info, size_t nBytes) {
   info->useWarpSpeed = false;
-  if(!comm->topo->warpSpeedEnabled) {
-    return;
-  }
- info->useWarpSpeed = (info->algorithm == NCCL_ALGO_RING); // Enabled by default for any RING algorithm when platform supports it
-  if(rcclParamWarpSpeedAutoMode() != 0 && IsArchMatch(comm->archName, "gfx950")) { // Auto mode only available for gfx950 currently
+  if(!rcclCollSupportsRing(info->func)) return;
+  if(rcclParamWarpSpeedAutoMode() != 0) { // Auto performance mode
+    if(!IsArchMatch(comm->archName, "gfx950")) {
+      // Auto mode only available for gfx950 currently, keep it to false
+      return;
+    }
     size_t minBytes = 0;
+    commSetUnrollFactor(comm);  // TODO: reset unroll factor per task rather than per comm
+    // No early return based on the algorithm at the start of the function
+    // to allow unroll factor to be reverted to default.
+    // This can be changed once per-task unroll factor setting is implemented.
+    if(info->algorithm != NCCL_ALGO_RING) {
+      return; // If Ring is not selected, assume it is suboptimal and return
+    }
     if(info->func == ncclFuncAllReduce || info->func == ncclFuncAllGather) minBytes = RCCL_WARP_SPEED_MIN_BYTES;
     else if (info->func == ncclFuncReduceScatter) minBytes = RCCL_WARP_SPEED_MIN_BYTES << 2; // ReduceScatter requires higher message size to benefit from WarpSpeed
     if(comm->nNodes == 1) {
       if(nBytes >= minBytes && minBytes > 0) {
         comm->unroll = NCCL_UNROLL_2;
         info->nWarps = 4;
+        info->useWarpSpeed = true;
       }
-    } else {
-      // TODO: set unroll factor per task rather than per comm
-      commSetUnrollFactor(comm);
-      info->useWarpSpeed = false;
     }
+  } else if (comm->topo->warpSpeedEnabled) {
+    if(info->algorithm != NCCL_ALGO_RING) {
+      INFO(NCCL_TUNING, "Overriding %s algorithm with RING for nccl%s at %zu bytes as WarpSpeed is requested and only supports RING", ncclAlgoToString(info->algorithm), ncclFuncToString(info->func), nBytes);
+      info->algorithm = NCCL_ALGO_RING; // Force Ring when WarpSpeed is enabled in manual mode as it only supports Ring
+    }
+    info->useWarpSpeed = true;
   }
-
 }
 #endif
 

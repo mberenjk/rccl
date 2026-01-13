@@ -29,8 +29,6 @@
 
 static_assert(sizeof(ncclNetHandle_t) <= CONNECT_SIZE, "NET Connect info is too large");
 
-#define RCCL_ANP_PLUGIN_STR  "RCCL-ANP"
-
 #define NCCL_NET_MAP_HOSTMEM 0
 #define NCCL_NET_MAP_DEVMEM 1
 #define NCCL_NET_MAP_SHARED_HOSTMEM 2
@@ -199,6 +197,7 @@ struct setupReq {
 };
 
 NCCL_PARAM(NetOptionalRecvCompletion, "NET_OPTIONAL_RECV_COMPLETION", 1);
+RCCL_PARAM(AinicRoce, "AINIC_ROCE", 0);
 
 static_assert(sizeof(ncclNetHandle_t) + sizeof(int) <= CONNECT_SIZE, "Not large enough ncclConnect to hold ncclNetHandle_t and useGdr flag");
 
@@ -869,6 +868,7 @@ static ncclResult_t ncclNetGetDeviceHandle(ncclNetDeviceType type, int version, 
 static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   ncclNet_ctxt_t ncclNetCtxt = {};
   struct sendNetResources* resources = (struct sendNetResources*)(connection->transportResources);
+  bool rcclAinicRoce = ((rcclParamAinicRoce() == 1) ? true : false);
   if (reqSize != sizeof(netSendConnectArgs)) return ncclInternalError;
   ncclResult_t ret = ncclSuccess;
   netSendConnectArgs* req = (netSendConnectArgs*) reqBuff;
@@ -876,12 +876,17 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
   setNetAttrs(proxyState, &req->netAttr);
 
   NCCLCHECK(ncclNetGetDeviceHandle(resources->netDeviceType, resources->netDeviceVersion, false /*isRecv*/, &resources->netDeviceHandle));
-  bool rccl_anp = !(strcmp(proxyState->ncclNet->name, RCCL_ANP_PLUGIN_STR));
   
   // Only call rcclNetP2pPolicy for ncclNetIb
   if (proxyState->ncclNet == &ncclNetIb) {
     NCCLCHECK(rcclNetP2pPolicy(req->handle, resources->isP2p));
   }
+
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIPCC__)
+  if (proxyState->ncclNet == &rocmNetIb) {
+    NCCLCHECK(rcclRocmNetP2pPolicy(req->handle, resources->isP2p));
+  }
+#endif
   
   if (resources->shared) {
     // Shared buffers
@@ -906,7 +911,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
         comms->activeConnect[resources->channelId] = (resources->tpLocalRank + 1);
       if (comms->sendComm[resources->channelId] == NULL
           && comms->activeConnect[resources->channelId] == (resources->tpLocalRank + 1)) {
-        if (rccl_anp) {
+        if (rcclAinicRoce) {
           ncclNetCtxt.chId = resources->channelId;
           ret = proxyState->ncclNet->connect(proxyState->netContext, resources->netDev, req->handle,
             comms->sendComm + resources->channelId, (ncclNetDeviceHandle_t **)&ncclNetCtxt);
@@ -918,7 +923,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
       resources->netSendComm = comms->sendComm[resources->channelId];
       if (comms->sendComm[resources->channelId]) comms->sendRefCount[resources->channelId]++;
     } else {
-      if (rccl_anp) {
+      if (rcclAinicRoce) {
         ncclNetCtxt.chId = resources->channelId;
         ret = proxyState->ncclNet->connect(proxyState->netContext, resources->netDev, req->handle, &resources->netSendComm, (ncclNetDeviceHandle_t **)&ncclNetCtxt);
       } else {
@@ -927,7 +932,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
     }
   } else {
     // Connect to remote peer
-    if (rccl_anp) {
+    if (rcclAinicRoce) {
       ncclNetCtxt.chId = resources->channelId;
       ret = proxyState->ncclNet->connect(proxyState->netContext, resources->netDev, req->handle, &resources->netSendComm, (ncclNetDeviceHandle_t **)&ncclNetCtxt);
     } else {
@@ -1085,6 +1090,7 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
   resources->tpRemoteProxyRank = req->proxyRank;
   ncclResult_t ret = ncclSuccess;
   ncclNet_ctxt_t ncclNetCtxt = {};
+  bool rcclAinicRoce = ((rcclParamAinicRoce() == 1) ? true : false);
 
   bool rccl_anp = !(strcmp(proxyState->ncclNet->name, RCCL_ANP_PLUGIN_STR));
 
@@ -1116,7 +1122,7 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
       //try connecting while comm is null
       if (comms->recvComm[resources->channelId] == NULL
          && comms->activeAccept[resources->channelId] == (resources->tpLocalRank + 1)) {
-        if (rccl_anp) {
+        if (rcclAinicRoce) {
           ncclNetCtxt.chId = resources->channelId;
           ret = proxyState->ncclNet->accept(resources->netListenComm,
             comms->recvComm+resources->channelId, (ncclNetDeviceHandle_t **)&ncclNetCtxt);
@@ -1128,7 +1134,7 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
       resources->netRecvComm = comms->recvComm[resources->channelId];
       if (comms->recvComm[resources->channelId]) comms->recvRefCount[resources->channelId]++;
     } else {
-      if (rccl_anp) {
+      if (rcclAinicRoce) {
         ncclNetCtxt.chId = resources->channelId;
         ret = proxyState->ncclNet->accept(resources->netListenComm, &resources->netRecvComm, (ncclNetDeviceHandle_t **)&ncclNetCtxt);
       } else {
@@ -1137,7 +1143,7 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
     }
   } else {
     // Connect to remote peer
-    if (rccl_anp) {
+    if (rcclAinicRoce) {
       ncclNetCtxt.chId = resources->channelId;
       ret = proxyState->ncclNet->accept(resources->netListenComm, &resources->netRecvComm, (ncclNetDeviceHandle_t **)&ncclNetCtxt);
     } else {

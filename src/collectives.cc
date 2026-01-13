@@ -13,6 +13,10 @@
 #include "nvtx_payload_schemas.h"
 #include "msccl/msccl_lifecycle.h"
 
+#ifdef ENABLE_ROCSHMEM
+#include <rocshmem/rocshmem.hpp>
+#endif
+
 using namespace rccl;
 
 const char* ncclFuncToString(ncclFunc_t fn) {
@@ -93,9 +97,12 @@ ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sen
     sendbuff, recvbuff, sendcount, datatype, ncclSum, 0, comm, stream, /* Args */
     ALLGATHER_CHUNKSTEPS, comm -> rcclUseOneSlice ? ALLGATHER_SLICESTEPS_SINGLE_NODE : ALLGATHER_SLICESTEPS, nullptr };
 
-  int nRanks;
+  int nRanks, rank;
   int in_place = 0;
+  const void* srcBuf;
+  void* dstBuf;
   NCCLCHECK(ncclCommCount(comm, &nRanks));
+  NCCLCHECK(ncclCommUserRank(comm, &rank));
   size_t msgSize = sendcount * ncclTypeSize(datatype) * nRanks;
 
   if (!mscclIsCaller())
@@ -110,21 +117,30 @@ ncclResult_t ncclAllGather_impl(const void* sendbuff, void* recvbuff, size_t sen
   }
 
   if (rcclUseAllGatherDirect(comm, msgSize)) {
+     INFO(NCCL_INIT, "RCCL DIRECT ALLGATHER count = %zu, msgSize = %zu, comm = %p, stream = %p, rank = %d, sendbuff = %p, recvbuff = %p", 
+		     sendcount, msgSize, comm, stream, rank, sendbuff, recvbuff);	  
      // use direct allgather
      if (sendcount == 0) return ncclSuccess;
      size_t rankOffset = sendcount * ncclTypeSize(datatype);
-     if (((char*)sendbuff) == (((char*)recvbuff) + comm->rank * rankOffset)) {
+     if (sendbuff == (((char*)recvbuff) + rank * rankOffset)) {
+        srcBuf = ((char*)recvbuff) + rank * rankOffset;
+        dstBuf = recvbuff;
         in_place = 1;
-     } 
+     } else {
+        srcBuf = sendbuff;
+        dstBuf = recvbuff;
+     }
 
+     if (!in_place)
+         CUDACHECK(cudaMemcpyAsync((char*)dstBuf + rank * rankOffset, srcBuf, rankOffset, cudaMemcpyDeviceToDevice, stream));
+     
      NCCLCHECK(ncclGroupStart());
+
      for (int r = 0; r < nRanks; r++) {
-         int peer = (comm->rank + r) % nRanks;
-         if (in_place && (peer == comm->rank)) {
-            continue;
+         if (r != rank) {
+             NCCLCHECK(ncclSend(((char*)dstBuf) + rank * rankOffset, sendcount, datatype, r, comm, stream));
+             NCCLCHECK(ncclRecv(((char*)dstBuf) + r * rankOffset, sendcount, datatype, r, comm, stream));
          }
-         NCCLCHECK(ncclSend(sendbuff, sendcount, datatype, peer, comm, stream));
-         NCCLCHECK(ncclRecv(((char*)recvbuff) + peer * rankOffset, sendcount, datatype, peer, comm, stream));
      }
      NCCLCHECK(ncclGroupEnd());
      return ncclSuccess;
@@ -156,6 +172,8 @@ ncclResult_t ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t coun
 
   size_t rankOffset = count * ncclTypeSize(datatype);
   size_t rankAlign = rankOffset & ((~rankOffset) + 1);
+  size_t msgSize = count * ncclTypeSize(datatype) * comm->nRanks;
+
   struct ncclInfo info;
   if (comm->topo->pivotA2AEnabled && comm->nChannels >= comm->topo->pivotA2ANumBiRings * 2 &&
       rankOffset >= 744 * 1024 && rankAlign != 4 && rcclParamAllToAllPivotEnable()) {
@@ -163,6 +181,15 @@ ncclResult_t ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t coun
         sendbuff, recvbuff, count, datatype, ncclSum, 0, comm, stream, /* Args */
         ALLTOALL_PIVOT_CHUNKSTEPS, ALLTOALL_PIVOT_SLICESTEPS, nullptr };
   } else {
+      #ifdef ENABLE_ROCSHMEM
+      if (rcclUseAllToAllGda(comm) && msgSize <= comm->rocshmemThreshold) {	
+        struct ncclInfo info = { ncclFuncAllToAllGda, "AllToAllGda",
+              sendbuff, recvbuff, count, datatype, ncclSum, 0, comm, stream,
+              ALLTOALL_PIVOT_CHUNKSTEPS, ALLTOALL_PIVOT_SLICESTEPS, nullptr };
+            
+        return ncclEnqueueCheck(&info);
+      }
+      #endif ENABLE_ROCSHMEM
     info = { ncclFuncAlltoAll, "AlltoAll",
       sendbuff, recvbuff, count, datatype, ncclSum, 0, comm, stream, /* Args */
       ALLTOALL_CHUNKSTEPS, ALLTOALL_SLICESTEPS };

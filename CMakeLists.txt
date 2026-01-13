@@ -42,6 +42,7 @@ option(TIMETRACE                               "Enable time-trace during compila
 option(TRACE                                   "Enable additional tracing"                     OFF)
 option(FAULT_INJECTION                         "Enable fault injection"                        ON)
 option(QUIET_WARNINGS                          "Supress compiler warnings"                     OFF)
+option(ENABLE_ROCSHMEM                         "Enable rocSHMEM support in RCCL"               OFF)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -65,6 +66,11 @@ include(CheckSymbolExists)
 include(cmake/Dependencies.cmake) # GTest, rocm-cmake, rocm_local_targets
 include(cmake/CheckSymbolExistsNoWarn.cmake)
 
+# Include rocSHMEM build module only if enabled
+if(ENABLE_ROCSHMEM)
+  include(cmake/ROCSHMEM.cmake)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Build only for local GPU architecture
@@ -79,6 +85,9 @@ endif()
 
 # Determine which GPU architectures to build for
 set(GPU_TARGETS "${DEFAULT_GPUS}" CACHE STRING "Target default GPUs if GPU_TARGETS is not defined.")
+
+# ROCM NetIB patch
+include(cmake/rocmIb.cmake)
 
 # Modify GPU architectures for Address Sanitizer builds by appending "xnack+"
 if (BUILD_ADDRESS_SANITIZER)
@@ -318,6 +327,8 @@ if(BUILD_BFD)
   endif()
 endif()
 
+
+
 # Check for --amdgpu-kernarg-preload-count
 check_cxx_compiler_flag("-mllvm --amdgpu-kernarg-preload-count=16" HAVE_KERNARG_PRELOAD)
 if (HAVE_KERNARG_PRELOAD)
@@ -471,6 +482,7 @@ set(SRC_FILES
   src/device/all_gather.h
   src/device/all_reduce.h
   src/device/alltoall_pivot.h
+  src/device/alltoall_gda.h
   src/device/broadcast.h
   src/device/common.h
   src/device/common_kernel.h
@@ -577,6 +589,9 @@ set(SRC_FILES
   src/include/mlx5/mlx5dvcore.h
   src/include/mlx5/mlx5dvsymbols.h
   src/include/mlx5/mlx5dvwrap.h
+  src/include/ionic/ionicdvcore.h
+  src/include/ionic/ionicdvsymbols.h
+  src/include/ionic/ionicdvwrap.h
   src/include/msccl/msccl_lifecycle.h
   src/include/msccl/msccl_parser.h
   src/include/msccl/msccl_scheduler.h
@@ -673,6 +688,8 @@ set(SRC_FILES
   src/misc/ipcsocket.cc
   src/misc/mlx5dvsymbols.cc
   src/misc/mlx5dvwrap.cc
+  src/misc/ionicdvsymbols.cc
+  src/misc/ionicdvwrap.cc
   src/misc/npkit.cc
 # src/misc/nvmlwrap.cc
   src/misc/nvmlwrap_stub.cc
@@ -728,6 +745,7 @@ set(SRC_FILES
   src/transport/generic.cc
   src/transport/net.cc
   src/transport/net_ib.cc
+  src/transport/net_ib_rocm.cc
   src/transport/net_socket.cc
   src/transport/nvls.cc
   src/transport/p2p.cc
@@ -896,6 +914,7 @@ target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/device/network/unpack)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/mlx5)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/nccl_device)
+target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/ionic)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/plugin)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/gensrc)
 target_include_directories(rccl PRIVATE ${HSA_INCLUDE_PATH})
@@ -907,6 +926,7 @@ endif()
 if(ROCTX_ENABLE)
   target_include_directories(rccl PRIVATE ${ROCTRACER_INCLUDE_DIR})
 endif()
+
 
 ## Set RCCL compile definitions
 if(COLLTRACE)
@@ -926,6 +946,28 @@ if(HAVE_ROCM_SMI_THREAD_ONLY_MUTEX)
 endif()
 if(ENABLE_WARP_SPEED)
   target_compile_definitions(rccl PRIVATE ENABLE_WARP_SPEED)
+endif()
+if(ENABLE_ROCSHMEM)
+  target_compile_definitions(rccl PRIVATE ENABLE_ROCSHMEM)
+endif()
+
+# ==== rocSHMEM integration (optional) ====
+
+if (ENABLE_ROCSHMEM)
+  add_rocshmem_targets()
+  # Ensure rocSHMEM is fully built/installed before compiling rccl
+  if (TARGET rocshmem_ext)
+    add_dependencies(rccl rocshmem_ext)
+  endif()
+
+  if (ROCSHMEM_INCLUDE_DIR)
+    target_include_directories(rccl PRIVATE ${ROCSHMEM_INCLUDE_DIR})
+  endif()
+
+  # Moved to where MSCCL target_links
+  ## target_link_libraries(rccl PRIVATE ${ROCSHMEM_LIBRARY})
+  target_link_libraries(rccl PRIVATE ${IBVERBS})
+
 endif()
 
 # NPKit flags
@@ -1152,8 +1194,7 @@ if(ENABLE_CODE_COVERAGE)
   message(STATUS "Code coverage is enabled with build type '${CMAKE_BUILD_TYPE}'.")
 
   target_compile_options(rccl PRIVATE
-    -fvisibility=default -Xarch_host -fprofile-instr-generate
-    -Xarch_host -fcoverage-mapping)
+    -fvisibility=default -Xarch_host -fprofile-instr-generate -Xarch_host -fcoverage-mapping)
 
   set(COVERAGE_SHARED_LINKER_FLAGS
     -fprofile-generate
@@ -1258,6 +1299,10 @@ target_link_libraries(rccl PRIVATE   ${ROCM_SMI_LIBRARIES})
 target_link_libraries(rccl PRIVATE fmt::fmt-header-only)
 if(ENABLE_MSCCLPP)
   target_link_libraries(rccl PRIVATE mscclpp_nccl)
+endif()
+if(ENABLE_ROCSHMEM)
+  target_link_libraries(rccl PRIVATE ${ROCSHMEM_LIBRARY})
+  target_link_libraries(rccl PRIVATE ${IBVERBS})
 endif()
 
 ## Set RCCL link options
