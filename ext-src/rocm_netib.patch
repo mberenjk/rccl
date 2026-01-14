@@ -2,17 +2,17 @@ diff --git a/src/transport/net_ib.cc b/src/transport/net_ib.cc
 index 7af56a6c..5c3e3d46 100644
 --- a/src/transport/net_ib.cc
 +++ b/src/transport/net_ib.cc
-@@ -28,6 +28,7 @@
- 
+@@ -29,6 +29,7 @@
+
  #include "ibvwrap.h"
  #include "mlx5/mlx5dvwrap.h"
 +#include "ionic/ionicdvwrap.h"
  #include "graph/xml.h"
- 
+
  #define MAXSUFFIXSIZE 16
-@@ -107,9 +108,31 @@ struct ncclIbMergedDev ncclIbMergedDevs[MAX_IB_VDEVS];
+@@ -110,6 +111,27 @@ struct ncclIbMergedDev ncclIbMergedDevs[MAX_IB_VDEVS];
  struct ncclIbDev ncclIbDevs[MAX_IB_DEVS];
- pthread_mutex_t ncclIbLock = PTHREAD_MUTEX_INITIALIZER;
+ static std::mutex ncclIbMutex;
  static int ncclIbRelaxedOrderingEnabled = 0;
 +static bool rcclAinicRoce = 0;
 +static bool rcclCtsInlineData = 0;
@@ -34,36 +34,36 @@ index 7af56a6c..5c3e3d46 100644
 +
 +static ncclChannelToUd nccl_channel_ud_map[MAXCHANNELS][ncclIbChannelTypeMax];
 +static bool nccl_channel_last_ud[MAX_IB_DEVS][ncclIbChannelTypeMax];
- 
- #define NCCL_IB_LLSTR(ll) (((ll) == IBV_LINK_LAYER_INFINIBAND) ? "IB" : (((ll) == IBV_LINK_LAYER_ETHERNET) ? "RoCE" : "UNSPECIFIED"))
- 
 +#define NCCL_CTS_QP_SLOT_INVALID 0xFF
-+
- #define NCCL_IB_SL_DEFAULT 0
- #define NCCL_IB_TC_DEFAULT 0
- 
-@@ -131,6 +154,13 @@ NCCL_PARAM(IbEceEnable,"IB_ECE_ENABLE",1);
- NCCL_PARAM(IbDataDirect,"IB_DATA_DIRECT",1);
+
+ #define NCCL_IB_LLSTR(ll) (((ll) == IBV_LINK_LAYER_INFINIBAND) ? "IB" : (((ll) == IBV_LINK_LAYER_ETHERNET) ? "RoCE" : "UNSPECIFIED"))
+
+@@ -142,6 +164,14 @@ NCCL_PARAM(IbDataDirect,"IB_DATA_DIRECT",1);
  NCCL_PARAM(IbQpsPerConn, "IB_QPS_PER_CONNECTION", 1);
  RCCL_PARAM(IbQpsPerP2p, "IB_QPS_PER_P2P", 0);
-+NCCL_PARAM(IbGdrFlushDisable, "GDR_FLUSH_DISABLE", 0);
+
 +
 +// AMD AINIC
 +RCCL_PARAM(CtsInlineData, "CTS_INLINE_DATA", -1);
 +RCCL_PARAM(CtsOffloadEnabled, "CTS_OFFLOAD_ENABLED", -1);
 +
 +extern int64_t rcclParamAinicRoce();
- 
++
  static ncclResult_t ncclIbStatsInit(struct ncclIbStats* stat) {
    __atomic_store_n(&stat->fatalErrorCount, 0, __ATOMIC_RELAXED);
-@@ -630,6 +660,10 @@ ncclResult_t ncclIbInit(ncclDebugLogger_t logFunction, ncclProfilerCallback_t pr
+   return ncclSuccess;
+@@ -779,7 +809,10 @@ ncclResult_t ncclIbInit(void** ctx, uint64_t commId, ncclNetCommConfig_t* config
    static int shownIbHcaEnv = 0;
    if(wrap_ibv_symbols() != ncclSuccess) { return ncclInternalError; }
    if(wrap_mlx5dv_symbols() != ncclSuccess) { INFO(NCCL_NET, "NET/IB : Failed to open mlx5dv symbols. Advance features like CX-8 Direct-NIC will be disabled."); }
+-
 +  if(wrap_ionicdv_symbols() != ncclSuccess) {
 +    WARN("NET/IB : Failed to open ionicdv symbols. Advance features like AINIC UD load balancing will be disabled.");
 +    return ncclInternalError;
 +  }
+   // Detect IB cards
+   int nIbDevs = 0;
+   struct ibv_device** devices = NULL;
  
    // Detect IB cards
    int nIbDevs = 0;
