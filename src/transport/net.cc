@@ -1092,8 +1092,6 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
   ncclNet_ctxt_t ncclNetCtxt = {};
   bool rcclAinicRoce = ((rcclParamAinicRoce() == 1) ? true : false);
 
-  bool rccl_anp = !(strcmp(proxyState->ncclNet->name, RCCL_ANP_PLUGIN_STR));
-
   setNetAttrs(proxyState, &req->netAttr);
 
   NCCLCHECK(ncclNetGetDeviceHandle(resources->netDeviceType, resources->netDeviceVersion, true /*isRecv*/, &resources->netDeviceHandle));

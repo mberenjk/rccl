@@ -87,7 +87,8 @@ endif()
 set(GPU_TARGETS "${DEFAULT_GPUS}" CACHE STRING "Target default GPUs if GPU_TARGETS is not defined.")
 
 # ROCM NetIB patch
-include(cmake/rocmIb.cmake)
+# Disabling rocm ib patch for now
+#include(cmake/rocmIb.cmake)
 
 # Modify GPU architectures for Address Sanitizer builds by appending "xnack+"
 if (BUILD_ADDRESS_SANITIZER)
@@ -745,7 +746,7 @@ set(SRC_FILES
   src/transport/generic.cc
   src/transport/net.cc
   src/transport/net_ib.cc
-  src/transport/net_ib_rocm.cc
+  #src/transport/net_ib_rocm.cc
   src/transport/net_socket.cc
   src/transport/nvls.cc
   src/transport/p2p.cc
