@@ -70,7 +70,7 @@ ncclResult_t ncclDevrInitOnce(struct ncclComm* comm) {
   CUmemAllocationProp memProp = {};
   memProp.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   memProp.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  memProp.requestedHandleTypes = ncclCuMemHandleType;
+  memProp.requestedHandleType = ncclCuMemHandleType;
   memProp.location.id = comm->cudaDev;
   CUCHECKGOTO(cuMemGetAllocationGranularity(&devr->granularity, &memProp, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED), ret, fail_lsaRankList);
 
@@ -745,7 +745,7 @@ ncclResult_t ncclDevrCommCreateInternal(
     CUmemAllocationProp memProp = {};
     memProp.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     memProp.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    memProp.requestedHandleTypes = ncclCuMemHandleType;
+    memProp.requestedHandleType = ncclCuMemHandleType;
     memProp.location.id = comm->cudaDev;
 
     CUCHECKGOTO(cuMemCreate(&memHandle, bufSizeTotal, &memProp, 0), ret, fail);

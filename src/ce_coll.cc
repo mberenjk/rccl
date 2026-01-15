@@ -98,7 +98,7 @@ bool ncclCeImplemented(ncclFunc_t coll, int/*ncclDevRedOp_t*/ red, ncclDataType_
   return false;
 }
 
-ncclResult_t ncclPrepMCSync(struct ncclComm* comm, bool isComplete, CUstreamBatchMemOpParams* batchParams, size_t* opIdx, cudaStream_t stream) {
+ncclResult_t ncclPrepMCSync(struct ncclComm* comm, bool isComplete, hipStreamBatchMemOpParams* batchParams, size_t* opIdx, cudaStream_t stream) {
   ncclResult_t ret = ncclSuccess;
 
   uint32_t* readyPtrs    = (uint32_t*)comm->ceColl.baseUCSymReadyPtr;
@@ -144,7 +144,7 @@ fail:
 }
 
 ncclResult_t ncclPrepUCSync(struct ncclComm* comm, bool isComplete,
-                               CUstreamBatchMemOpParams* batchParams,
+                               hipStreamBatchMemOpParams* batchParams,
                                size_t* opIdx) {
   ncclResult_t ret = ncclSuccess;
 
@@ -200,7 +200,7 @@ ncclResult_t ncclMemOpSync(struct ncclComm* comm, cudaStream_t stream) {
   size_t opIdx = 0;
 
   // Prepare batch memory operations for synchronization
-  CUstreamBatchMemOpParams* batchParams = nullptr;
+  hipStreamBatchMemOpParams* batchParams = nullptr;
   NCCLCHECKGOTO(ncclCalloc(&batchParams, batchSize), ret, fail);
 
   if (comm->nvlsSupport) {
@@ -222,7 +222,7 @@ ncclResult_t ncclMemOpSync(struct ncclComm* comm, cudaStream_t stream) {
   }
   
   // Execute all memory operations in a single batch
-  CUCHECKGOTO(cuStreamBatchMemOp(stream, opIdx, batchParams, 0), ret, fail);
+  CUCHECKGOTO(hipStreamBatchMemOp(stream, opIdx, batchParams, 0), ret, fail);
 
   // Toggle the flag for next call
   comm->ceColl.useCompletePtr = !comm->ceColl.useCompletePtr;
