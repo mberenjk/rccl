@@ -111,6 +111,33 @@ struct ncclIbMergedDev rocmIbMergedDevs[MAX_IB_VDEVS];
 struct ncclIbDev rocmIbDevs[MAX_IB_DEVS];
 static std::mutex ncclIbMutex;
 static int ncclIbRelaxedOrderingEnabled = 0;
+static bool rcclAinicRoce = 0;
+static bool rcclCtsInlineData = 0;
+static bool rcclCtsOffloadEnabled = 0;
+static bool ncclIbUseInline = 0;
+static int ncclIbGdrFlushDisable = 0;
+
+enum ncclIbChannelType {
+  ncclIbChannelTypeCts  = 0,
+  ncclIbChannelTypeData = 1,
+  ncclIbChannelTypeMax  = 2
+};
+
+struct ncclChannelToUd {
+    int channelId;
+    bool udId;
+    bool udAllocated;
+};
+
+static ncclChannelToUd nccl_channel_ud_map[MAXCHANNELS][ncclIbChannelTypeMax];
+static bool nccl_channel_last_ud[MAX_IB_DEVS][ncclIbChannelTypeMax];
+
+#define NCCL_IB_LLSTR(ll) (((ll) == IBV_LINK_LAYER_INFINIBAND) ? "IB" : (((ll) == IBV_LINK_LAYER_ETHERNET) ? "RoCE" : "UNSPECIFIED"))
+
+#define NCCL_CTS_QP_SLOT_INVALID 0xFF
+
+#define NCCL_IB_SL_DEFAULT 0
+#define NCCL_IB_TC_DEFAULT 0
 
 // With ncclNet_v11_t the NCCL core initializes the network plugin per-communicator
 // rather than once for all communicators. However, the internal plugin implementation
@@ -118,11 +145,6 @@ static int ncclIbRelaxedOrderingEnabled = 0;
 // counter makes sure the plugin internally initializes only once. When per communicator
 // context support is added to the plugin the ref counter can be removed.
 static int netRefCount;
-
-#define NCCL_IB_LLSTR(ll) (((ll) == IBV_LINK_LAYER_INFINIBAND) ? "IB" : (((ll) == IBV_LINK_LAYER_ETHERNET) ? "RoCE" : "UNSPECIFIED"))
-
-#define NCCL_IB_SL_DEFAULT 0
-#define NCCL_IB_TC_DEFAULT 0
 
 NCCL_PARAM(RocmIbGidIndex, "IB_GID_INDEX", -1);
 NCCL_PARAM(RocmIbRoutableFlidIbGidIndex, "IB_ROUTABLE_FLID_GID_INDEX", 1);
@@ -771,7 +793,7 @@ ncclResult_t rocmIbMakeVDevice(int* d, ncclNetVDeviceProps_t* props) {
 
 }
 
-ncclResult_t ncclIbSetNetAttr(void *ctx, ncclNetAttr_t *netAttr) {
+ncclResult_t rocmNetIbSetNetAttr(void *ctx, ncclNetAttr_t *netAttr) {
   (void)ctx;
   (void)netAttr;
   return ncclSuccess;
@@ -956,6 +978,23 @@ ncclResult_t rocmIbInit(void** ctx, uint64_t commId, ncclNetCommConfig_t* config
     INFO(NCCL_INIT|NCCL_NET, "NET/IB : Using%s %s; OOB %s:%s", line, ncclIbRelaxedOrderingEnabled ? "[RO]" : "",
           ncclIbIfName, ncclSocketToString(&ncclIbIfAddr, addrline));
 
+    ncclIbUseInline = ncclParamRocmIbUseInline();
+    ncclIbGdrFlushDisable = ncclParamRocmIbGdrFlushDisable();
+
+    rcclAinicRoce = ((rcclParamAinicRoce() == 1) ? true : false);
+    if (rcclAinicRoce) {
+      // for AINIC, these params are defaulted to enabled unless user forces it to disable(0).
+      rcclCtsInlineData = ((rcclParamCtsInlineData() == 0) ? false : true);
+      rcclCtsOffloadEnabled = ((rcclParamCtsOffloadEnabled() == 0) ? false : true);
+      // for AINIC IbUseInline is enabled by default always
+      ncclIbUseInline = true;
+      // for AINIC GDR flush is disabled by default
+      ncclIbGdrFlushDisable = 1;
+
+      INFO(NCCL_INIT|NCCL_NET, "NET/IB : AINIC RoCEv2 optimizations enabled: CTS Inline Data: %s; CTS Offload: %s; "
+           "IB Use Inline: enabled; GDR Flush: disabled", rcclCtsInlineData ? "Enabled": "Disabled",
+           rcclCtsOffloadEnabled ? "Enabled": "Disabled");
+    }
   }
 exit:
   ibContext.trafficClass = config->trafficClass;
@@ -1591,7 +1630,7 @@ fail:
   goto exit;
 }
 
-ncclResult_t rocmIbConnect(void* ctx, int dev, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** /*sendDevComm*/) {
+ncclResult_t rocmIbConnect(void* ctx, int dev, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** sendDevComm) {
   ncclResult_t ret = ncclSuccess;
   struct ncclIbHandle* handle = (struct ncclIbHandle*) opaqueHandle;
   struct ncclIbCommStage* stage = &handle->stage;
@@ -1759,7 +1798,11 @@ ib_recv_dev_list:
     }
   }
   config = (ncclNetCommConfig_t*)ctx;
-  meta.fifoAddr = (uint64_t)comm->fifo;
+  if (rcclCtsInlineData) {
+    meta.fifoAddr = (uint64_t)comm->fifo_inline;
+  } else {
+    meta.fifoAddr = (uint64_t)comm->fifo;
+  }
   meta.sl = (ncclParamRocmIbSl() != -1) ? ncclParamRocmIbSl() : (config && config->trafficClass != NCCL_NET_TRAFFIC_CLASS_UNDEF) ? config->trafficClass : NCCL_IB_SL_DEFAULT;
   meta.tc = (ncclParamRocmIbTc() != -1) ? ncclParamRocmIbTc() : (config && config->trafficClass != NCCL_NET_TRAFFIC_CLASS_UNDEF) ? config->trafficClass : NCCL_IB_TC_DEFAULT;
   strncpy(meta.devName, mergedDev->devName, MAX_MERGED_DEV_NAME);
@@ -3067,7 +3110,7 @@ ncclResult_t rocmIbCloseListen(void* listenComm) {
   return ncclSuccess;
 }
 
-ncclResult_t ncclIbFinalize(void* ctx) {
+ncclResult_t rocmNetIbFinalize(void* ctx) {
   netRefCount--;
   return ncclSuccess;
 }
@@ -3101,8 +3144,8 @@ ncclNet_t rocmNetIb = {
   NULL /* getDeviceMr */,
   NULL /* irecvConsumed */,
   rocmIbMakeVDevice,
-  ncclIbFinalize,
-  ncclIbSetNetAttr,
+  rocmNetIbFinalize,
+  rocmNetIbSetNetAttr,
 };
 
 /*
