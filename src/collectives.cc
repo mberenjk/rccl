@@ -197,6 +197,14 @@ ncclResult_t ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t coun
   return ncclEnqueueCheck(&info);
 }
 
+NCCL_API(ncclResult_t, ncclAllToAll, const void* sendbuff, void* recvbuff, size_t count,
+  ncclDataType_t datatype, ncclComm* comm, cudaStream_t stream);
+ncclResult_t ncclAllToAll_impl(const void* sendbuff, void* recvbuff, size_t count,
+  ncclDataType_t datatype, ncclComm* comm, cudaStream_t stream) {
+INFO(NCCL_INIT, "AllToAll is called but it is deprecated, please use AlltoAll instead");
+  return ncclAlltoAll_impl(sendbuff, recvbuff, count, datatype, comm, stream);
+}
+
 NCCL_API(ncclResult_t, ncclAlltoAllv, const void *sendbuff, const size_t sendcounts[], const size_t sdispls[],
     void *recvbuff, const size_t recvcounts[], const size_t rdispls[],
     ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);

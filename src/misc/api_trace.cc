@@ -461,6 +461,7 @@ ncclResult_t
 ncclAlltoAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
              ncclComm_t comm, hipStream_t stream)
 {
+    WARN("Please note that ncclAllToAll is deprecated, please use ncclAlltoAll instead");
     return ::rccl::RcclGetFunctionTable()->ncclAlltoAll_fn(sendbuff, recvbuff, count,
                                                            datatype, comm, stream);
 }

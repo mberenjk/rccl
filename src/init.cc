@@ -939,6 +939,7 @@ static ncclResult_t devCommSetup(ncclComm_t comm) {
 #endif
 
 #if defined(ENABLE_NPKIT)
+  WARN("NPKIT is deprecated, please use Profiler Plugin instead!");
   // Init NPKit
   NCCLCHECK(NpKit::Init(comm->rank));
   tmpCommAndChans.comm.npKitEventCollectContexts = NpKit::GetGpuEventCollectContexts();
@@ -1968,6 +1969,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   timers[TIMER_INIT_CONNECT] = clockNano() -  timers[TIMER_INIT_CONNECT];
 
   if (mscclEnabled() && (comm->topo->mscclEnabled || mscclForceEnabled())) {
+    WARN("MSCCL is deprecated, please be careful with this feature!");
     NCCLCHECK(mscclInit(comm));
     mscclStatus& status = mscclGetStatus(comm);
     status.needsProxy |= mscclNeedsProxy;
