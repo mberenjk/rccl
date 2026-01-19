@@ -65,10 +65,10 @@ typedef ncclResult_t (*ncclAllReduceWithBias_fn_t)(const void* sendbuff, void* r
                                            size_t count, ncclDataType_t datatype,
                                            ncclRedOp_t op, struct ncclComm* comm,
                                            hipStream_t stream, const void* acc);
-typedef ncclResult_t (*ncclAllToAll_fn_t)(const void* sendbuff, void* recvbuff,
+typedef ncclResult_t (*ncclAlltoAll_fn_t)(const void* sendbuff, void* recvbuff,
                                           size_t count, ncclDataType_t datatype,
                                           ncclComm_t comm, hipStream_t stream);
-typedef ncclResult_t (*ncclAllToAllv_fn_t)(
+typedef ncclResult_t (*ncclAlltoAllv_fn_t)(
     const void* sendbuff, const size_t sendcounts[], const size_t sdispls[],
     void* recvbuff, const size_t recvcounts[], const size_t rdispls[],
     ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
@@ -162,7 +162,7 @@ typedef ncclResult_t (*ncclCommRegister_fn_t)(const ncclComm_t comm, void* buff,
 
 typedef ncclResult_t (*ncclCommDeregister_fn_t)(const ncclComm_t comm, void* handle);
 
-typedef ncclResult_t (*ncclCommWindowRegister_fn_t)(ncclComm_t comm, void* buff, size_t size, ncclWindow_t* win, int winFlags);
+typedef ncclResult_t (*ncclCommWindowRegister_fn_t)(ncclComm_t comm, void* userPtr, size_t userSize, ncclWindow_t* outWinDev, int winFlags);
 
 typedef ncclResult_t (*ncclCommWindowDeregister_fn_t)(ncclComm_t comm, ncclWindow_t win);
 
@@ -172,8 +172,8 @@ typedef struct rcclApiFuncTable
     uint64_t                      size;
     ncclAllGather_fn_t            ncclAllGather_fn;
     ncclAllReduce_fn_t            ncclAllReduce_fn;
-    ncclAllToAll_fn_t             ncclAllToAll_fn;
-    ncclAllToAllv_fn_t            ncclAllToAllv_fn;
+    ncclAlltoAll_fn_t             ncclAlltoAll_fn;
+    ncclAlltoAllv_fn_t            ncclAlltoAllv_fn;
     ncclBroadcast_fn_t            ncclBroadcast_fn;
     ncclGather_fn_t               ncclGather_fn;
     ncclReduce_fn_t               ncclReduce_fn;
