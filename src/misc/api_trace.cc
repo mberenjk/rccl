@@ -27,8 +27,18 @@ ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t count,
                    cudaStream_t stream);
 
 ncclResult_t
+ncclAlltoAll_impl(const void* sendbuff, void* recvbuff, size_t count,
+                  ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
+
+ncclResult_t
 ncclAllToAll_impl(const void* sendbuff, void* recvbuff, size_t count,
                   ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
+
+ncclResult_t
+ncclAlltoAllv_impl(const void* sendbuff, const size_t sendcounts[],
+                   const size_t sdispls[], void* recvbuff, const size_t recvcounts[],
+                   const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
+                   hipStream_t stream);
 
 ncclResult_t
 ncclAllToAllv_impl(const void* sendbuff, const size_t sendcounts[],
@@ -192,50 +202,52 @@ compute_table_size(size_t nmembers)
 // DO NOT REORDER, ADD NEW ITEMS TO BOTTOM
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllGather_fn, 0);
 RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllReduce_fn, 1);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllToAll_fn, 2);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllToAllv_fn, 3);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclBroadcast_fn, 4);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGather_fn, 5);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclReduce_fn, 6);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclReduceScatter_fn, 7);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclScatter_fn, 8);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclSend_fn, 9);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclRecv_fn, 10);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclRedOpCreatePreMulSum_fn, 11);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclRedOpDestroy_fn, 12);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGroupStart_fn, 13);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGroupEnd_fn, 14);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetVersion_fn, 15);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetUniqueId_fn, 16);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommInitRank_fn, 17);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommInitAll_fn, 18);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommInitRankConfig_fn, 19);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommFinalize_fn, 20);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommDestroy_fn, 21);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommAbort_fn, 22);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommSplit_fn, 23);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetErrorString_fn, 24);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetLastError_fn, 25);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommGetAsyncError_fn, 26);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommCount_fn, 27);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommCuDevice_fn, 28);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommUserRank_fn, 29);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclMemAlloc_fn, 30);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclMemFree_fn, 31);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, mscclLoadAlgo_fn, 32);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, mscclRunAlgo_fn, 33);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, mscclUnloadAlgo_fn, 34);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommRegister_fn, 35);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommDeregister_fn, 36);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllReduceWithBias_fn, 37);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommShrink_fn, 38);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommWindowRegister_fn, 39);
-RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommWindowDeregister_fn, 40);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAlltoAll_fn, 2);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllToAll_fn, 3);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAlltoAllv_fn, 4);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllToAllv_fn, 5);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclBroadcast_fn, 6);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGather_fn, 7);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclReduce_fn, 8);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclReduceScatter_fn, 9);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclScatter_fn, 10);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclSend_fn, 11);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclRecv_fn, 12);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclRedOpCreatePreMulSum_fn, 13);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclRedOpDestroy_fn, 14);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGroupStart_fn, 15);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGroupEnd_fn, 16);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetVersion_fn, 17);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetUniqueId_fn, 18);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommInitRank_fn, 19);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommInitAll_fn, 20);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommInitRankConfig_fn, 21);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommFinalize_fn, 22);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommDestroy_fn, 23);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommAbort_fn, 24);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommSplit_fn, 25);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetErrorString_fn, 26);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclGetLastError_fn, 27);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommGetAsyncError_fn, 28);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommCount_fn, 29);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommCuDevice_fn, 30);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommUserRank_fn, 31);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclMemAlloc_fn, 32);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclMemFree_fn, 33);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, mscclLoadAlgo_fn, 34);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, mscclRunAlgo_fn, 35);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, mscclUnloadAlgo_fn, 36);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommRegister_fn, 37);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommDeregister_fn, 38);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclAllReduceWithBias_fn, 39);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommShrink_fn, 40);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommWindowRegister_fn, 41);
+RCCL_ASSERT_OFFSET(rcclApiFuncTable, ncclCommWindowDeregister_fn, 42);
 // DO NOT REORDER, ADD NEW ITEMS HERE
 
 #undef RCCL_ASSERT_OFFSET
 
-static_assert(sizeof(rcclApiFuncTable) == compute_table_size(41),
+static_assert(sizeof(rcclApiFuncTable) == compute_table_size(43),
               "Update table major/step version and add a new offset assertion if this "
               "fails to compile");
 
@@ -248,7 +260,9 @@ RcclGetFunctionTable_impl()
         new(m_buffer.data()) rcclApiFuncTable{ sizeof(rcclApiFuncTable),
                                                &ncclAllGather_impl,
                                                &ncclAllReduce_impl,
+                                               &ncclAlltoAll_impl,
                                                &ncclAllToAll_impl,
+                                               &ncclAlltoAllv_impl,
                                                &ncclAllToAllv_impl,
                                                &ncclBroadcast_impl,
                                                &ncclGather_impl,
@@ -331,10 +345,10 @@ NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size
 NCCL_API(ncclResult_t, ncclAllReduceWithBias, const void* sendbuff, void* recvbuff, size_t count,
          ncclDataType_t datatype, ncclRedOp_t op, ncclComm* comm, hipStream_t stream, const void* acc);
 
-NCCL_API(ncclResult_t, ncclAllToAll, const void* sendbuff, void* recvbuff, size_t count,
+NCCL_API(ncclResult_t, ncclAlltoAll, const void* sendbuff, void* recvbuff, size_t count,
          ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream);
 
-NCCL_API(ncclResult_t, ncclAllToAllv, const void* sendbuff, const size_t sendcounts[],
+NCCL_API(ncclResult_t, ncclAlltoAllv, const void* sendbuff, const size_t sendcounts[],
          const size_t sdispls[], void* recvbuff, const size_t recvcounts[],
          const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
          hipStream_t stream);
@@ -458,11 +472,30 @@ ncclAllReduceWithBias(const void* sendbuff, void* recvbuff, size_t count, ncclDa
 }
 
 ncclResult_t
+ncclAlltoAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+             ncclComm_t comm, hipStream_t stream)
+{
+    return ::rccl::RcclGetFunctionTable()->ncclAlltoAll_fn(sendbuff, recvbuff, count,
+                                                           datatype, comm, stream);
+}
+
+ncclResult_t
 ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
              ncclComm_t comm, hipStream_t stream)
 {
-    return ::rccl::RcclGetFunctionTable()->ncclAllToAll_fn(sendbuff, recvbuff, count,
+    WARN("Please note that ncclAllToAll is deprecated, please use ncclAlltoAll instead");
+    return ::rccl::RcclGetFunctionTable()->ncclAlltoAll_fn(sendbuff, recvbuff, count,
                                                            datatype, comm, stream);
+}
+
+ncclResult_t
+ncclAlltoAllv(const void* sendbuff, const size_t sendcounts[], const size_t sdispls[],
+              void* recvbuff, const size_t recvcounts[], const size_t rdispls[],
+              ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream)
+{
+    return ::rccl::RcclGetFunctionTable()->ncclAlltoAllv_fn(sendbuff, sendcounts, sdispls,
+                                                            recvbuff, recvcounts, rdispls,
+                                                            datatype, comm, stream);
 }
 
 ncclResult_t
@@ -470,7 +503,8 @@ ncclAllToAllv(const void* sendbuff, const size_t sendcounts[], const size_t sdis
               void* recvbuff, const size_t recvcounts[], const size_t rdispls[],
               ncclDataType_t datatype, ncclComm_t comm, hipStream_t stream)
 {
-    return ::rccl::RcclGetFunctionTable()->ncclAllToAllv_fn(sendbuff, sendcounts, sdispls,
+    WARN("Please note that ncclAllToAllv is deprecated, please use ncclAlltoAllv instead");
+    return ::rccl::RcclGetFunctionTable()->ncclAlltoAllv_fn(sendbuff, sendcounts, sdispls,
                                                             recvbuff, recvcounts, rdispls,
                                                             datatype, comm, stream);
 }
